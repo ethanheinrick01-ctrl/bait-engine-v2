@@ -1,0 +1,30 @@
+[
+  {
+    "name": "spectral_instrumentalism",
+    "text": "You're just confusing what is useful with what is true. A model being practical doesn't make it metaphysically necessary, and the mechanism explains function, not necessity.",
+    "expect_archetypes": ["spectral"],
+    "expect_contradictions": ["utility_vs_truth", "mechanism_vs_necessity"],
+    "expect_objectives": ["hook", "collapse"]
+  },
+  {
+    "name": "aggressive_poster",
+    "text": "This is obviously stupid and anyone defending it is a clown. You people always do this shit and it's pathetic.",
+    "expect_archetypes": ["aggressive_poster", "confident_idiot"],
+    "expect_contradictions": ["confidence_evidence_mismatch"],
+    "expect_objectives": ["hook", "exit_on_top"]
+  },
+  {
+    "name": "sealion",
+    "text": "What exactly do you mean by that? Why do you believe it? How is that not just your opinion? Can you define your terms?",
+    "expect_archetypes": ["sealion"],
+    "expect_contradictions": ["definition_evasion"],
+    "expect_objectives": ["hook", "branch_split"]
+  },
+  {
+    "name": "low_value_sludge",
+    "text": "lol nah",
+    "expect_archetypes": [],
+    "expect_contradictions": [],
+    "expect_objectives": ["do_not_engage"]
+  }
+]

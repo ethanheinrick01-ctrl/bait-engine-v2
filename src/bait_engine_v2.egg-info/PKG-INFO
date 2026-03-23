@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: bait-engine-v2
+Version: 0.1.0
+Summary: Cognitive core scaffolding for a rhetoric analysis engine
+Requires-Python: >=3.11
+Requires-Dist: pydantic<3,>=2.6
