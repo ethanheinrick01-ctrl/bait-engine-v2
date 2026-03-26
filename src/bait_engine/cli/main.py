@@ -1722,6 +1722,19 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
 
         candidates = run.get("candidates") or []
         top_candidates = candidates[:3]
+        first_candidate_text = ""
+        for candidate in candidates:
+            candidate_text = str(candidate.get("text") or "").strip() if isinstance(candidate, dict) else ""
+            if candidate_text:
+                first_candidate_text = candidate_text
+                break
+        output_preview_html = (
+            '<div class="response" style="margin-top:8px;"><span class="small">Generated output preview</span>'
+            f'<pre style="white-space:pre-wrap; background:#0f1115; border:1px solid #2b313d; border-radius:8px; padding:10px; margin:6px 0 0 0;">{html.escape(first_candidate_text[:400])}</pre>'
+            '</div>'
+            if first_candidate_text
+            else '<div class="response" style="margin-top:8px;"><span class="small">Generated output preview</span><div class="small">No candidate output stored for this run yet.</div></div>'
+        )
         run_persona_js = _js_call_arg(run.get("persona") or "dry_midwit_savant")
         run_platform_js = _js_call_arg(run.get("platform") or "reddit")
         run_id_js = _js_call_arg(run_id_value)
@@ -1767,7 +1780,8 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
             f'<div><a data-run-id="{run_id}" href="/?run_id={run_id}">Run #{run_id}</a> '
             f'<span class="meta">{platform} · {persona}{badge}</span></div>'
             f'<button type="button" class="small" onclick="document.getElementById(\'autopsy-{run_id}\').style.display=\'block\'">Autopsy</button></div>'
-            f'<div class="source">{source}</div>'
+            f'<div class="source"><span class="small">Input</span><br>{source}</div>'
+            f'{output_preview_html}'
             f'{response_block}'
             f'{followup_block}'
             f'<div id="autopsy-{run_id}" style="display:none; background:#11141b; border:1px solid #2b313d; border-radius:8px; padding:12px; margin-top:10px;">'
