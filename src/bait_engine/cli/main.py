@@ -1619,10 +1619,15 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
     latest_run_id = payload.get("latest_run_id")
     default_persona_name = str(payload.get("default_persona") or "dry_midwit_savant")
     default_persona = html.escape(default_persona_name)
-    default_platform = html.escape(payload.get("default_platform") or "reddit")
+    default_platform_name = str(payload.get("default_platform") or "reddit")
+    default_platform = html.escape(default_platform_name)
     persona_options_html = "".join(
         f'<option value="{html.escape(name)}"{" selected" if name == default_persona_name else ""}>{html.escape(name)}</option>'
         for name in sorted(DEFAULT_PERSONAS.keys())
+    )
+    platform_options_html = "".join(
+        f'<option value="{html.escape(name)}"{" selected" if name == default_platform_name else ""}>{html.escape(name.title())}</option>'
+        for name in ("reddit", "x", "discord", "web")
     )
     pending_emit_count = int(payload.get("pending_emit_count") or 0)
     dispatch_count = int(payload.get("dispatch_count") or 0)
@@ -1991,8 +1996,8 @@ code {{ font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monos
     <div style="display:grid; gap:12px;">
       <textarea id="draftText" rows="6" style="width:100%; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:10px; padding:12px;">A model being useful doesn't make it true, and you're still confusing mechanism with necessity.</textarea>
       <div class="actions">
-        <label>Persona <select id="draftPersona" style="margin-left:8px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px;">{persona_options_html}</select></label>
-        <label>Platform <input id="draftPlatform" value="{default_platform}" style="margin-left:8px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px;" /></label>
+        <label>Persona <select id="draftPersona" style="margin-left:8px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px; appearance:auto; -webkit-appearance:menulist; cursor:pointer;">{persona_options_html}</select></label>
+        <label>Platform <select id="draftPlatform" style="margin-left:8px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px; appearance:auto; -webkit-appearance:menulist; cursor:pointer;">{platform_options_html}</select></label>
         <label>Count <input id="draftCount" type="number" min="1" value="5" style="margin-left:8px; width:84px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px;" /></label>
       </div>
       <div class="actions">
