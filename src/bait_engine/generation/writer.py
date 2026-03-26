@@ -277,8 +277,8 @@ def _build_absurdist_suffixes() -> list[str]:
 
 
 PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
-    "dry_midwit_savant" {
-        "openers" [
+    "dry_midwit_savant": {
+        "openers": [
             "small correction:",
             "premise check:",
             "quick calibration:",
@@ -293,8 +293,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "in one line:",
             "plain terms:",
         ],
-        "suffixes" _build_dry_midwit_suffixes(),
-        "closers" [
+        "suffixes": _build_dry_midwit_suffixes(),
+        "closers": [
             "that's the whole trick.",
             "that's the gap.",
             "that's the miss.",
@@ -307,8 +307,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "clean this up and it might hold.",
         ],
     },
-    "smug_moron_oracle" {
-        "openers" [
+    "smug_moron_oracle": {
+        "openers": [
             "bro:",
             "be serious:",
             "look:",
@@ -320,8 +320,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "chief:",
             "listen:",
         ],
-        "suffixes" _build_smug_oracle_suffixes(),
-        "closers" [
+        "suffixes": _build_smug_oracle_suffixes(),
+        "closers": [
             "we're not doing fantasy accounting.",
             "say it slower next round.",
             "you can do better than this.",
@@ -332,8 +332,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "nice try though.",
         ],
     },
-    "calm_unbothered_ghoul" {
-        "openers" [
+    "calm_unbothered_ghoul": {
+        "openers": [
             "briefly:",
             "plainly:",
             "cold read:",
@@ -345,8 +345,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "mechanics only:",
             "short form:",
         ],
-        "suffixes" _build_calm_ghoul_suffixes(),
-        "closers" [
+        "suffixes": _build_calm_ghoul_suffixes(),
+        "closers": [
             "that's enough.",
             "nothing else to add.",
             "this is resolved.",
@@ -357,8 +357,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "end of line.",
         ],
     },
-    "fake_sincere_questioner" {
-        "openers" [
+    "fake_sincere_questioner": {
+        "openers": [
             "help me map this:",
             "genuine question:",
             "could you clarify:",
@@ -370,8 +370,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "trying to follow:",
             "honest fork:",
         ],
-        "suffixes" _build_fake_sincere_suffixes(),
-        "closers" [
+        "suffixes": _build_fake_sincere_suffixes(),
+        "closers": [
             "what am i missing?",
             "where does that step happen?",
             "which part is testable?",
@@ -382,8 +382,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "does that seem right to you?",
         ],
     },
-    "absurdist_accelerator" {
-        "openers" [
+    "absurdist_accelerator": {
+        "openers": [
             "live from the timeline:",
             "breaking:",
             "new patch notes:",
@@ -395,8 +395,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "spectator cam:",
             "latest arc:",
         ],
-        "suffixes" _build_absurdist_suffixes(),
-        "closers" [
+        "suffixes": _build_absurdist_suffixes(),
+        "closers": [
             "roll credits.",
             "season finale behavior.",
             "the choir of forks has spoken.",
@@ -508,15 +508,15 @@ def _inject_anchor_hint(text: str, anchors: list[str], idx: int) -> str:
 
 
 def _apply_pressure_profile(text: str, profile: str, idx: int) -> str:
-    if profile == "surgical_pinch"
+    if profile == "surgical_pinch":
         return f"premise first: {text}" if idx % 3 == 0 else text
-    if profile == "taunt_escalator"
+    if profile == "taunt_escalator":
         return f"{text} keep pretending" if idx % 2 == 0 else f"{text} lol"
-    if profile == "ice_pick"
+    if profile == "ice_pick":
         return text.replace("?", "").replace("!", "").strip()
-    if profile == "velvet_snare"
+    if profile == "velvet_snare":
         return f"quick question: {text}" if idx % 2 == 0 else text
-    if profile == "chaos_ramp"
+    if profile == "chaos_ramp":
         return f"{text} and somehow this gets weirder"
     return text
 
@@ -559,7 +559,7 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
 
     pool = mutation_pool + base + alternates
 
-    style_pack = PERSONA_STYLE_PACKS.get(request.persona.name, {"openers" [""], "suffixes" [""], "closers" [""]})
+    style_pack = PERSONA_STYLE_PACKS.get(request.persona.name, {"openers": [""], "suffixes": [""], "closers": [""]})
     seed = _stable_seed(request)
     openers = _permuted(style_pack.get("openers", [""]), seed, 17)
     suffixes = _permuted(style_pack.get("suffixes", [""]), seed, 29)
