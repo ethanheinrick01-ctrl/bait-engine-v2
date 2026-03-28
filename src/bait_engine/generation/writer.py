@@ -279,19 +279,19 @@ def _build_absurdist_suffixes() -> list[str]:
 PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
     "dry_midwit_savant": {
         "openers": [
-            "small correction:",
-            "premise check:",
-            "quick calibration:",
-            "translation:",
-            "let's tighten this:",
-            "version that survives contact:",
-            "if we're scoring rigor:",
-            "mechanically:",
-            "clean room pass:",
-            "diagnosis:",
-            "reality check:",
-            "in one line:",
-            "plain terms:",
+            "small correction",
+            "premise check",
+            "quick calibration",
+            "translation",
+            "let's tighten this",
+            "version that survives contact",
+            "if we're scoring rigor",
+            "mechanically",
+            "clean room pass",
+            "diagnosis",
+            "reality check",
+            "in one line",
+            "plain terms",
         ],
         "suffixes": _build_dry_midwit_suffixes(),
         "closers": [
@@ -309,16 +309,16 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
     },
     "smug_moron_oracle": {
         "openers": [
-            "bro:",
-            "be serious:",
-            "look:",
-            "quick one:",
-            "status report:",
-            "newsflash:",
-            "translation:",
-            "anyway:",
-            "chief:",
-            "listen:",
+            "bro",
+            "be serious",
+            "look",
+            "quick one",
+            "status report",
+            "newsflash",
+            "translation",
+            "anyway",
+            "chief",
+            "listen",
         ],
         "suffixes": _build_smug_oracle_suffixes(),
         "closers": [
@@ -334,16 +334,16 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
     },
     "calm_unbothered_ghoul": {
         "openers": [
-            "briefly:",
-            "plainly:",
-            "cold read:",
-            "without heat:",
-            "simple:",
-            "minimal version:",
-            "quiet note:",
-            "flat answer:",
-            "mechanics only:",
-            "short form:",
+            "briefly",
+            "plainly",
+            "cold read",
+            "without heat",
+            "simple",
+            "minimal version",
+            "quiet note",
+            "flat answer",
+            "mechanics only",
+            "short form",
         ],
         "suffixes": _build_calm_ghoul_suffixes(),
         "closers": [
@@ -359,16 +359,16 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
     },
     "fake_sincere_questioner": {
         "openers": [
-            "help me map this:",
-            "genuine question:",
-            "could you clarify:",
-            "quick check:",
-            "walk me through this:",
-            "i might be missing it:",
-            "sanity check:",
-            "for precision:",
-            "trying to follow:",
-            "honest fork:",
+            "help me map this",
+            "genuine question",
+            "could you clarify",
+            "quick check",
+            "walk me through this",
+            "i might be missing it",
+            "sanity check",
+            "for precision",
+            "trying to follow",
+            "honest fork",
         ],
         "suffixes": _build_fake_sincere_suffixes(),
         "closers": [
@@ -384,16 +384,16 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
     },
     "absurdist_accelerator": {
         "openers": [
-            "live from the timeline:",
-            "breaking:",
-            "new patch notes:",
-            "cinematic cut:",
-            "plot update:",
-            "field report:",
-            "narrator voice:",
-            "counterpoint from orbit:",
-            "spectator cam:",
-            "latest arc:",
+            "live from the timeline",
+            "breaking",
+            "new patch notes",
+            "cinematic cut",
+            "plot update",
+            "field report",
+            "narrator voice",
+            "counterpoint from orbit",
+            "spectator cam",
+            "latest arc",
         ],
         "suffixes": _build_absurdist_suffixes(),
         "closers": [
@@ -504,21 +504,25 @@ def _inject_anchor_hint(text: str, anchors: list[str], idx: int) -> str:
         return text
     if prefix.lower() in text.lower():
         return text
-    return f"{prefix}: {text}"
+    return f"{prefix}, {text}"
 
 
 def _apply_pressure_profile(text: str, profile: str, idx: int) -> str:
     if profile == "surgical_pinch":
-        return f"premise first: {text}" if idx % 3 == 0 else text
+        return f"premise first, {text}" if idx % 3 == 0 else text
     if profile == "taunt_escalator":
         return f"{text} keep pretending" if idx % 2 == 0 else f"{text} lol"
     if profile == "ice_pick":
         return text.replace("?", "").replace("!", "").strip()
     if profile == "velvet_snare":
-        return f"quick question: {text}" if idx % 2 == 0 else text
+        return f"quick question, {text}" if idx % 2 == 0 else text
     if profile == "chaos_ramp":
         return f"{text} and somehow this gets weirder"
     return text
+
+
+def _strip_bot_punctuation(text: str) -> str:
+    return " ".join(text.replace(":", " ").replace(";", ",").split())
 
 
 def _trim_to_band(text: str, min_words: int, max_words: int) -> str:
@@ -589,6 +593,7 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
         text = _apply_pressure_profile(text, request.persona.pressure_profile, idx)
         text = _inject_anchor_hint(text, request.winner_anchors, idx)
         text = _strip_avoid_patterns(text, request.avoid_patterns)
+        text = _strip_bot_punctuation(text)
         text = _trim_to_band(text, min_words, max_words)
 
         if use_seed:
