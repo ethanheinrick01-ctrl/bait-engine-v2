@@ -37,7 +37,7 @@ TACTIC_TEMPLATES: dict[TacticFamily, list[str]] = {
     ],
     TacticFamily.ABSURDIST_DERAIL: [
         "none of this addresses the moon's liability here",
-        "counterpoint — spiritually this is losing badly",
+        "counterpoint, spiritually this is losing badly",
         "interesting but the forks remain unconvinced",
     ],
     TacticFamily.SCHOLAR_HEX: [
@@ -127,15 +127,14 @@ def _build_dry_midwit_suffixes() -> list[str]:
         "lol",
         "not remotely equivalent",
         "same error, longer sentence",
-        "you can tighten this without hallucinating certainty",
+        "saying it confidently isn't the same as proving it",
         "you can be loud or correct, pick one",
         "the math still says no",
         "you'd need one more premise for this to land",
-        "same category error, prettier wording",
+        "same category error, different wording",
         "if this is your strong version, that's rough",
-        "this argument is all scaffolding, no beam",
-        "citation-shaped confidence isn't a citation",
-        "you're making a mechanism claim with vibes",
+        "you built a frame with nothing inside it",
+        "vibes aren't a mechanism",
         "it sounds technical, it isn't",
     ]
     return _build_suffixes(lead_ins, payloads, extras)
@@ -535,6 +534,92 @@ def _trim_to_band(text: str, min_words: int, max_words: int) -> str:
     return text
 
 
+# Informal conjunctions and trailing tags, keyed by register tier.
+# Low  = target uses simple diction (register < 0.35)
+# Mid  = mid-register (0.35–0.65)
+# High = elevated vocabulary (> 0.65) — keep formal, no tags
+_CONNECTORS: dict[str, list[str]] = {
+    "low":  ["cuz", "cause", "tho", "but like", "so like", "and like"],
+    "mid":  ["though", "but", "which", "honestly", "and"],
+    "high": [],
+}
+_TRAILING_TAGS: dict[str, list[str]] = {
+    "low":  ["lol", "lmao", "ngl", "tbh", "fr", "imo", "lulz"],
+    "mid":  ["lol", "ngl", "honestly"],
+    "high": [],
+}
+
+
+def _register_tier(target_register: float) -> str:
+    if target_register < 0.35:
+        return "low"
+    if target_register < 0.65:
+        return "mid"
+    return "high"
+
+
+def _stitch_clauses(
+    opener: str,
+    template: str,
+    suffix: str,
+    closer: str,
+    *,
+    target_register: float,
+    seed: int,
+    idx: int,
+) -> str:
+    """Assemble components using informal conjunctions when appropriate.
+
+    Low-register targets get casual connectors (cuz, tho) and optional
+    trailing tags (lol, ngl). High-register targets get normal space joining.
+    """
+    tier = _register_tier(target_register)
+    connectors = _CONNECTORS[tier]
+    tags = _TRAILING_TAGS[tier]
+
+    # Use a mix of seed + idx so each candidate in a batch varies.
+    rng = (seed + idx * 7919) % (2 ** 31)
+
+    parts = [p for p in (opener, template, suffix, closer) if p]
+    if not parts:
+        return ""
+
+    if not connectors:
+        # High register — plain join
+        return " ".join(parts)
+
+    # Decide whether to use a connector between template and suffix.
+    use_connector = bool(template and suffix and (rng % 3 != 0))
+    # Decide whether to add a trailing tag at the end.
+    use_tag = bool(tags and (rng % 4 == 0))
+    # Occasionally drop opener entirely for casual brevity (low register).
+    drop_opener = tier == "low" and bool(rng % 5 == 0)
+
+    assembled_parts: list[str] = []
+    for part in parts:
+        if part == opener and drop_opener:
+            continue
+        assembled_parts.append(part)
+
+    if use_connector and len(assembled_parts) >= 2:
+        # Find the junction between template and suffix in assembled_parts
+        try:
+            t_idx = assembled_parts.index(template)
+            if t_idx + 1 < len(assembled_parts) and assembled_parts[t_idx + 1] == suffix:
+                connector = connectors[(rng // 3) % len(connectors)]
+                assembled_parts[t_idx] = f"{template} {connector}"
+        except ValueError:
+            pass
+
+    result = " ".join(assembled_parts)
+
+    if use_tag:
+        tag = tags[(rng // 5) % len(tags)]
+        result = f"{result} {tag}"
+
+    return result.strip()
+
+
 def _mutation_templates(request: DraftRequest) -> list[str]:
     seen: set[str] = set()
     templates: list[str] = []
@@ -588,7 +673,12 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
             opener = _select_with_suppression(openers, idx, local_recent_openers, global_recent_openers)
             suffix = _select_with_suppression(suffixes, idx, local_recent_suffixes, global_recent_suffixes)
             closer = _select_with_suppression(closers, idx, local_recent_closers, global_recent_closers)
-            text = " ".join(part for part in (opener, template, suffix, closer) if part).strip()
+            text = _stitch_clauses(
+                opener, template, suffix, closer,
+                target_register=request.target_register,
+                seed=seed,
+                idx=idx,
+            )
 
         text = _apply_pressure_profile(text, request.persona.pressure_profile, idx)
         text = _inject_anchor_hint(text, request.winner_anchors, idx)

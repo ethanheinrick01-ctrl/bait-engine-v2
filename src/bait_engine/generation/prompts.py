@@ -24,17 +24,23 @@ def _register_rules(target_register: float) -> list[str]:
             "Prefer short common words over technical or Latinate alternatives.",
             "Loose or imperfect grammar is fine if it sounds more natural than correct grammar.",
             "Do not introduce jargon or academic phrasing the target didn't use.",
+            "You can join two thoughts with casual connectors like 'cuz', 'tho', 'but like', 'cause' instead of a period.",
+            "Trailing tags like 'lol', 'ngl', 'fr', 'tbh' are acceptable and sound more human at this register.",
+            "Avoid aphoristic or overly polished phrasing — type it, don't write it.",
         ]
     if target_register < 0.65:
         return [
             "Target uses mid-register language — conversational but literate.",
             "Match their vocabulary level without dumbing down or academizing.",
             "Imperfect grammar is acceptable where it sounds more natural.",
+            "Occasional casual connectors like 'though', 'but', 'honestly' between clauses read as human.",
+            "A trailing 'lol' or 'ngl' is fine if it fits the tone.",
         ]
     return [
         "Target uses elevated vocabulary and complex syntax — match or slightly exceed their register.",
-        "Precise terminology is appropriate here; don't simplify what doesn't need simplifying.",
+        "Precise terminology is appropriate here — don't simplify what doesn't need simplifying.",
         "Grammatical precision is expected at this register, but stilted formality is still wrong.",
+        "Do not use casual connectors like 'cuz' or trailing tags like 'lol' — they would undercut the register.",
     ]
 
 
