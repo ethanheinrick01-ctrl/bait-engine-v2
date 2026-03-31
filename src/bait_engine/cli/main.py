@@ -342,6 +342,7 @@ def cmd_draft(
         mutation_context=mutation_context,
         winner_anchors=winner_anchors,
         avoid_patterns=avoid_patterns,
+        target_register=analysis.target_register,
     )
     draft = _generate_draft(request, heuristic_only=heuristic_only, provider=provider)
     plan_payload = plan.model_dump(mode="json")

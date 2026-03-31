@@ -52,6 +52,12 @@ def critique_candidate(candidate: CandidateReply, persona: PersonaProfile) -> Ca
     if candidate.text.count(",") >= 3:
         penalty += 0.16
         notes.append("too syntactically balanced")
+    if ":" in candidate.text:
+        penalty += 0.20
+        notes.append("contains colon — remove")
+    if ";" in candidate.text:
+        penalty += 0.20
+        notes.append("contains semicolon — remove")
     if candidate.text.endswith(".") and persona.punctuation_style in {"minimal", "loose"}:
         penalty += 0.05
         notes.append("too tidy for persona punctuation style")

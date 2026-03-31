@@ -37,7 +37,7 @@ TACTIC_TEMPLATES: dict[TacticFamily, list[str]] = {
     ],
     TacticFamily.ABSURDIST_DERAIL: [
         "none of this addresses the moon's liability here",
-        "counterpoint: spiritually this is losing badly",
+        "counterpoint — spiritually this is losing badly",
         "interesting but the forks remain unconvinced",
     ],
     TacticFamily.SCHOLAR_HEX: [
@@ -201,7 +201,7 @@ def _build_calm_ghoul_suffixes() -> list[str]:
     extras = [
         "no heat needed",
         "same output either way",
-        "short answer: no",
+        "short answer, no",
         "the line still breaks here",
         "this does not survive inspection",
     ]

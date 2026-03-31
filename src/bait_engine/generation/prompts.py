@@ -16,6 +16,28 @@ def _serialize_mutation_seed(seed: MutationSeed) -> dict:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _register_rules(target_register: float) -> list[str]:
+    """Return diction/register rules based on the target's detected lexical level."""
+    if target_register < 0.35:
+        return [
+            "Target uses simple vocabulary and short sentences — match that register.",
+            "Prefer short common words over technical or Latinate alternatives.",
+            "Loose or imperfect grammar is fine if it sounds more natural than correct grammar.",
+            "Do not introduce jargon or academic phrasing the target didn't use.",
+        ]
+    if target_register < 0.65:
+        return [
+            "Target uses mid-register language — conversational but literate.",
+            "Match their vocabulary level without dumbing down or academizing.",
+            "Imperfect grammar is acceptable where it sounds more natural.",
+        ]
+    return [
+        "Target uses elevated vocabulary and complex syntax — match or slightly exceed their register.",
+        "Precise terminology is appropriate here; don't simplify what doesn't need simplifying.",
+        "Grammatical precision is expected at this register, but stilted formality is still wrong.",
+    ]
+
+
 def build_prompt_payload(request: DraftRequest) -> dict:
     plan = request.plan
     writer_rules = [
@@ -25,7 +47,10 @@ def build_prompt_payload(request: DraftRequest) -> dict:
         "Avoid sounding like an AI assistant or debate essayist.",
         "Disagree with the source claim; do not open by agreeing.",
         "Ban agreement openers like: yeah, exactly, true, fair, facts, valid point, right.",
+        "Never use colons or semicolons.",
+        "Imperfect grammar is acceptable when it sounds more natural than correct grammar.",
     ]
+    writer_rules.extend(_register_rules(request.target_register))
     mutation_seeds = [_serialize_mutation_seed(seed) for seed in request.mutation_seeds if seed.text.strip()]
     if mutation_seeds:
         writer_rules.extend(
@@ -57,6 +82,7 @@ def build_prompt_payload(request: DraftRequest) -> dict:
             "tone_constraints": plan.tone_constraints,
             "exit_state": plan.exit_state,
         },
+        "target_register": round(request.target_register, 2),
         "mutation_seeds": mutation_seeds,
         "mutation_context": request.mutation_context,
         "winner_anchors": request.winner_anchors,

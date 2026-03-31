@@ -182,6 +182,33 @@ class SignalReport:
     def evidence_density(self) -> float:
         return sum(self.evidence_hits.values()) / max(self.token_count, 1)
 
+    @property
+    def lexical_register(self) -> float:
+        """0.0 = very simple diction, 1.0 = high vocabulary / academic register.
+
+        Derived from:
+        - avg_token_length: primary proxy for word complexity (5-char avg ~ mid, 7+ ~ high)
+        - jargon_density: academic/philosophical markers push register up
+        - evidence_density: citation-style language signals intellectual engagement
+        - avg sentence length (tokens per sentence): longer sentences → more complex syntax
+        """
+        # avg_token_length: clamp to 3–8 range, normalise to 0–1
+        token_len_score = max(0.0, min(1.0, (self.avg_token_length - 3.0) / 5.0))
+        # jargon: each jargon hit is already rare, so scale aggressively
+        jargon_score = min(1.0, self.jargon_density * 40.0)
+        # evidence markers signal structured argument
+        evidence_score = min(1.0, self.evidence_density * 20.0)
+        # avg sentence length: clamp 5–25 words
+        avg_sentence_len = self.token_count / max(self.sentence_count, 1)
+        sentence_score = max(0.0, min(1.0, (avg_sentence_len - 5.0) / 20.0))
+        return round(
+            0.45 * token_len_score
+            + 0.30 * jargon_score
+            + 0.15 * evidence_score
+            + 0.10 * sentence_score,
+            4,
+        )
+
 
 def _count_phrase_hits(text_lower: str, phrases: set[str]) -> dict[str, int]:
     hits: dict[str, int] = {}

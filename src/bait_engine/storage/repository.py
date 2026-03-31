@@ -1931,6 +1931,7 @@ class RunRepository:
             mutation_context=mutation_context,
             winner_anchors=winner_anchors,
             avoid_patterns=avoid_patterns,
+            target_register=analysis.target_register,
         )
 
         selected_model = str(escalation_decision.get("selected_model") or "")
@@ -4253,6 +4254,7 @@ class RunRepository:
         mutation_context, winner_anchors, avoid_patterns = self._derive_mutation_context(mutation_seeds)
         if pressure_context:
             mutation_context = f"{mutation_context} | {pressure_context}" if mutation_context else pressure_context
+        stored_register = float((run.get("analysis") or {}).get("target_register") or 0.5)
         return DraftRequest(
             source_text=run["source_text"],
             plan=plan,
@@ -4262,6 +4264,7 @@ class RunRepository:
             mutation_context=mutation_context,
             winner_anchors=winner_anchors,
             avoid_patterns=avoid_patterns,
+            target_register=stored_register,
         )
 
     @staticmethod

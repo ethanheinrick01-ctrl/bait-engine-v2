@@ -132,4 +132,5 @@ def analyze_comment(payload: AnalyzeInput) -> AnalysisResult:
         recommended_objectives=recommended_objectives,
         recommended_tactics=recommended_tactics,
         notes=notes,
+        target_register=signals.lexical_register,
     )

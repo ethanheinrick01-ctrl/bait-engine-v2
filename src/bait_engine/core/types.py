@@ -132,6 +132,7 @@ class AnalysisResult(BaseModel):
     recommended_objectives: list[TacticalObjective] = Field(default_factory=list)
     recommended_tactics: list[TacticFamily] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    target_register: Score = Field(ge=0.0, le=1.0, default=0.5)
 
 
 class BranchForecast(BaseModel):

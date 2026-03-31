@@ -42,6 +42,7 @@ class DraftRequest(BaseModel):
     mutation_context: str | None = None
     winner_anchors: list[str] = Field(default_factory=list)
     avoid_patterns: list[str] = Field(default_factory=list)
+    target_register: float = Field(ge=0.0, le=1.0, default=0.5)
 
 
 class DraftResult(BaseModel):
