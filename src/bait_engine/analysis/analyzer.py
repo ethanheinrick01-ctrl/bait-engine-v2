@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from bait_engine.analysis.archetypes import blend_archetypes, summarize_weight_profile
@@ -10,6 +11,9 @@ from bait_engine.analysis.opportunity import score_opportunity, should_engage
 from bait_engine.analysis.phases import estimate_phase
 from bait_engine.analysis.signals import SignalReport, extract_signals
 from bait_engine.core.types import AnalysisResult, TacticalObjective, TacticFamily
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -65,6 +69,7 @@ def _recommend_tactics(report: SignalReport, contradictions_count: int, engage: 
 
 
 def analyze_comment(payload: AnalyzeInput) -> AnalysisResult:
+    logger.debug("analyze_comment: platform=%s tokens~=%d", payload.platform, len(payload.text.split()))
     signals = extract_signals(payload.text)
     semantic = infer_semantics(payload.text)
     axes = score_axes(signals, semantic=semantic)
@@ -102,11 +107,19 @@ def analyze_comment(payload: AnalyzeInput) -> AnalysisResult:
 
     if not engage:
         notes.append("selectivity gate recommends skipping this target")
+        logger.info("analyze_comment: veto — engage=False engagement_value=%.2f contradictions=%d", opportunity.engagement_value, len(contradictions))
 
     profile_note = summarize_weight_profile(payload.archetype_weight_profile)
     if profile_note:
         notes.append(profile_note)
 
+    logger.debug(
+        "analyze_comment: done engage=%s objectives=%s contradictions=%d opportunity=%.2f",
+        engage,
+        [o.value for o in recommended_objectives],
+        len(contradictions),
+        opportunity.engagement_value,
+    )
     return AnalysisResult(
         source_text=payload.text,
         platform=payload.platform,

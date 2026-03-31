@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from bait_engine.core.types import AnalysisResult, DecisionPlan, PersonaRouterDecision
 from bait_engine.planning.branches import forecast_branches
 from bait_engine.planning.exits import choose_exit_state
@@ -8,12 +10,16 @@ from bait_engine.planning.personas import PersonaProfile, get_persona
 from bait_engine.planning.tactics import shortlist_tactics
 
 
+logger = logging.getLogger(__name__)
+
+
 def build_plan(
     result: AnalysisResult,
     persona: PersonaProfile | str | None = None,
     persona_router: PersonaRouterDecision | None = None,
 ) -> DecisionPlan:
     persona_profile = get_persona(persona) if isinstance(persona, str) or persona is None else persona
+    logger.debug("build_plan: persona=%s objective_candidates=%s", persona_profile.name, [o.value for o in result.recommended_objectives])
     objective = select_objective(result)
     tactic, alternates, tactic_reasons = shortlist_tactics(result, objective, persona_profile)
     branch_forecast = forecast_branches(result, tactic)
@@ -27,10 +33,19 @@ def build_plan(
     if result.opportunity.human_plausibility_window <= 0.3:
         risk_gates.append("low human plausibility window")
 
+    if risk_gates:
+        logger.info("build_plan: risk_gates=%s persona=%s objective=%s", risk_gates, persona_profile.name, objective.value)
+
     tone_constraints = list(persona_profile.tone_tags)
     if tactic_reasons:
         tone_constraints.extend(tactic_reasons)
 
+    logger.debug(
+        "build_plan: done objective=%s tactic=%s exit=%s",
+        objective.value,
+        tactic.value if tactic else None,
+        exit_state,
+    )
     return DecisionPlan(
         selected_objective=objective,
         selected_tactic=tactic,

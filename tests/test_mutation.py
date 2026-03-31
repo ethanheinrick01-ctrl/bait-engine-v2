@@ -9,7 +9,17 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from bait_engine.generation.mutate import generate_controlled_variants
+from bait_engine.generation.mutate import (
+    _compress,
+    _delta_ratio,
+    _fits_objective_shape,
+    _novelty_ratio,
+    _sharpen,
+    _soften_surface_preserve_sting,
+    _vary_cadence,
+    _within_mutation_guardrails,
+    generate_controlled_variants,
+)
 from bait_engine.storage import MutationFamilyRecord, MutationVariantRecord, OutcomeRecord, RunRepository
 from bait_engine.storage.db import open_db
 
@@ -445,6 +455,96 @@ class MutationPipelineTests(unittest.TestCase):
             rebuilt = repo.rebuild_request(run_id, mutation_source="none")
             self.assertIn("premise lock", rebuilt.persona.escalation_cues)
             self.assertIn("tone-shift trend: defensive", rebuilt.mutation_context or "")
+
+
+class MutationTransformEdgeCaseTests(unittest.TestCase):
+    """Unit tests for mutation transform functions with edge-case inputs."""
+
+    def test_generate_controlled_variants_empty_text_returns_empty(self) -> None:
+        result = generate_controlled_variants({"candidate_text": "", "candidate_objective": "hook"})
+        self.assertEqual(result, [])
+
+    def test_generate_controlled_variants_whitespace_only_returns_empty(self) -> None:
+        result = generate_controlled_variants({"candidate_text": "   \t\n  ", "candidate_objective": "hook"})
+        self.assertEqual(result, [])
+
+    def test_generate_controlled_variants_do_not_engage_returns_empty(self) -> None:
+        result = generate_controlled_variants({
+            "candidate_text": "That conclusion doesn't follow from the evidence.",
+            "candidate_objective": "do_not_engage",
+        })
+        self.assertEqual(result, [])
+
+    def test_generate_controlled_variants_special_chars(self) -> None:
+        text = "You're conflating correlation & causation — classic 'post hoc' error."
+        result = generate_controlled_variants({"candidate_text": text, "candidate_objective": "hook"})
+        # should produce list of dicts without crashing
+        self.assertIsInstance(result, list)
+        for item in result:
+            self.assertIn("text", item)
+            self.assertIn("transform", item)
+            self.assertIsInstance(item["text"], str)
+
+    def test_generate_controlled_variants_very_long_text(self) -> None:
+        text = ("You've built a conclusion on a foundation of assumption. " * 20).strip()
+        result = generate_controlled_variants({"candidate_text": text, "candidate_objective": "collapse"})
+        self.assertIsInstance(result, list)
+        # guardrails may filter most variants but shouldn't crash
+        for item in result:
+            self.assertIsInstance(item["text"], str)
+            self.assertGreater(len(item["text"]), 0)
+
+    def test_generate_controlled_variants_max_variants_respected(self) -> None:
+        text = "Confidence is not evidence, no matter the volume."
+        result = generate_controlled_variants(
+            {"candidate_text": text, "candidate_objective": "hook"},
+            max_variants=2,
+        )
+        self.assertLessEqual(len(result), 2)
+
+    def test_compress_single_sentence_returns_stripped(self) -> None:
+        result = _compress("only one sentence here")
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+
+    def test_compress_empty_returns_input(self) -> None:
+        result = _compress("")
+        self.assertEqual(result, "")
+
+    def test_sharpen_empty_returns_input(self) -> None:
+        result = _sharpen("")
+        self.assertEqual(result, "")
+
+    def test_soften_empty_returns_input(self) -> None:
+        result = _soften_surface_preserve_sting("")
+        self.assertEqual(result, "")
+
+    def test_vary_cadence_short_text_appends_why(self) -> None:
+        result = _vary_cadence("short text here")
+        self.assertIn("Why?", result)
+
+    def test_delta_ratio_identical_text_is_zero(self) -> None:
+        text = "same text same text"
+        self.assertAlmostEqual(_delta_ratio(text, text), 0.0, places=3)
+
+    def test_novelty_ratio_empty_base_is_zero(self) -> None:
+        self.assertEqual(_novelty_ratio("", "some variant text"), 0.0)
+
+    def test_novelty_ratio_empty_variant_is_zero(self) -> None:
+        self.assertEqual(_novelty_ratio("some base text", ""), 0.0)
+
+    def test_fits_objective_shape_do_not_engage_always_false(self) -> None:
+        self.assertFalse(_fits_objective_shape("anything?", "do_not_engage"))
+        self.assertFalse(_fits_objective_shape("anything", "do_not_engage"))
+
+    def test_fits_objective_shape_hook_requires_question(self) -> None:
+        self.assertFalse(_fits_objective_shape("no question here", "hook"))
+        self.assertTrue(_fits_objective_shape("has a question?", "hook"))
+
+    def test_within_mutation_guardrails_identical_text_fails(self) -> None:
+        text = "You're skipping the part that matters here."
+        ok, _ = _within_mutation_guardrails(text, text, "hook")
+        self.assertFalse(ok)
 
 
 if __name__ == "__main__":

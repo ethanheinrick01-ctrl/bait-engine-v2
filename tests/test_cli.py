@@ -1218,5 +1218,100 @@ class CliTests(unittest.TestCase):
         self.assertIn("summary,summary", csv_export["csv"])
 
 
+class PanelHttpEdgeCaseTests(unittest.TestCase):
+    def _start_server(self, db_path: str) -> tuple[object, str]:
+        server = _create_panel_http_server(None, db_path=db_path, host="127.0.0.1", port=0)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        base_url = f"http://{server.server_address[0]}:{server.server_address[1]}"
+        return server, base_url
+
+    def test_panel_post_malformed_json_returns_400(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, base_url = self._start_server(str(Path(tmp) / "bait.db"))
+            try:
+                req = Request(
+                    f"{base_url}/api/draft",
+                    data=b"this is not json {{{{",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    urlopen(req)
+                    self.fail("expected HTTPError 400")
+                except Exception as exc:
+                    code = getattr(exc, "code", None)
+                    self.assertEqual(code, 400)
+                    body = json.loads(exc.read().decode("utf-8"))
+                    self.assertIn("error", body)
+                    self.assertIn("invalid json", body["error"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_panel_post_draft_missing_text_returns_400(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, base_url = self._start_server(str(Path(tmp) / "bait.db"))
+            try:
+                req = Request(
+                    f"{base_url}/api/draft",
+                    data=json.dumps({"persona": "dry_midwit_savant", "count": 2}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    urlopen(req)
+                    self.fail("expected HTTPError 400")
+                except Exception as exc:
+                    code = getattr(exc, "code", None)
+                    self.assertEqual(code, 400)
+                    body = json.loads(exc.read().decode("utf-8"))
+                    self.assertIn("error", body)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_panel_post_unknown_path_returns_404(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, base_url = self._start_server(str(Path(tmp) / "bait.db"))
+            try:
+                req = Request(
+                    f"{base_url}/api/does-not-exist",
+                    data=json.dumps({}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    urlopen(req)
+                    self.fail("expected HTTPError 404")
+                except Exception as exc:
+                    code = getattr(exc, "code", None)
+                    self.assertEqual(code, 404)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_panel_post_empty_body_draft_returns_400(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, base_url = self._start_server(str(Path(tmp) / "bait.db"))
+            try:
+                req = Request(
+                    f"{base_url}/api/draft",
+                    data=b"",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                # empty body parses as "{}" which is missing "text", so expect 400
+                try:
+                    urlopen(req)
+                    self.fail("expected HTTPError 400")
+                except Exception as exc:
+                    code = getattr(exc, "code", None)
+                    self.assertEqual(code, 400)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()

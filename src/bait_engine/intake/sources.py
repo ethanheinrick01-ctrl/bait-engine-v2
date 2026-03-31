@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 import json
@@ -8,6 +9,9 @@ import urllib.parse
 import urllib.request
 
 from bait_engine.intake.contracts import HuntTarget
+
+
+logger = logging.getLogger(__name__)
 
 
 REDDIT_PUBLIC_BASE = "https://www.reddit.com"
@@ -280,22 +284,31 @@ def fetch_targets(
     user_agent: str | None = None,
     timeout_seconds: float = 15.0,
 ) -> list[HuntTarget]:
+    logger.info("fetch_targets: source=%s limit=%d", source, limit)
     if source == "jsonl_file":
         if not file_path:
             raise ValueError("jsonl_file source requires file_path")
-        return _fetch_jsonl_file(file_path=file_path)
+        targets = _fetch_jsonl_file(file_path=file_path)
+        logger.info("fetch_targets: jsonl_file returned %d targets from %s", len(targets), file_path)
+        return targets
     if source == "reddit_listing":
         if not subreddit:
             raise ValueError("reddit_listing source requires subreddit")
         token = access_token or os.environ.get("REDDIT_ACCESS_TOKEN")
-        return _fetch_reddit_listing(subreddit=subreddit, sort=sort, limit=limit, access_token=token, user_agent=user_agent, timeout_seconds=timeout_seconds)
+        targets = _fetch_reddit_listing(subreddit=subreddit, sort=sort, limit=limit, access_token=token, user_agent=user_agent, timeout_seconds=timeout_seconds)
+        logger.info("fetch_targets: reddit_listing r/%s returned %d targets", subreddit, len(targets))
+        return targets
     if source == "reddit_search":
         if not query:
             raise ValueError("reddit_search source requires query")
         token = access_token or os.environ.get("REDDIT_ACCESS_TOKEN")
-        return _fetch_reddit_search(query=query, subreddit=subreddit, sort=sort, limit=limit, access_token=token, user_agent=user_agent, timeout_seconds=timeout_seconds)
+        targets = _fetch_reddit_search(query=query, subreddit=subreddit, sort=sort, limit=limit, access_token=token, user_agent=user_agent, timeout_seconds=timeout_seconds)
+        logger.info("fetch_targets: reddit_search q=%r returned %d targets", query, len(targets))
+        return targets
     if source == "x_search_recent":
         if not query:
             raise ValueError("x_search_recent source requires query")
-        return _fetch_x_search_recent(query=query, limit=limit, bearer_token=bearer_token, timeout_seconds=timeout_seconds)
+        targets = _fetch_x_search_recent(query=query, limit=limit, bearer_token=bearer_token, timeout_seconds=timeout_seconds)
+        logger.info("fetch_targets: x_search_recent q=%r returned %d targets", query, len(targets))
+        return targets
     raise ValueError(f"unknown hunt source: {source}")

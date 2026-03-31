@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from bait_engine.generation.contracts import CandidateReply, DraftRequest, DraftResult
 from bait_engine.generation.critic import critique_candidate, starts_with_agreement_language
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates
+
+
+logger = logging.getLogger(__name__)
 
 
 DISAGREE_FALLBACKS = [
@@ -38,8 +43,16 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
 
 
 def draft_candidates(request: DraftRequest) -> DraftResult:
+    logger.debug(
+        "draft_candidates: persona=%s objective=%s tactic=%s count=%d",
+        request.persona.name,
+        request.plan.selected_objective.value,
+        request.plan.selected_tactic.value if request.plan.selected_tactic else None,
+        request.candidate_count,
+    )
     raw = generate_candidates(request)
     critiqued = [critique_candidate(candidate, request.persona) for candidate in raw]
     guarded = _enforce_disagreement(critiqued, request)
     ranked = rank_candidates(guarded)
+    logger.debug("draft_candidates: produced %d candidates", len(ranked))
     return DraftResult(request=request, candidates=ranked)

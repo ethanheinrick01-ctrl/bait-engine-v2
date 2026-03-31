@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -24,6 +25,9 @@ from bait_engine.planning import DEFAULT_PERSONAS, build_plan, get_persona, sele
 from bait_engine.providers import OpenAICompatibleProvider, TextGenerationProvider
 from bait_engine.storage.db import open_db
 from bait_engine.storage.models import EmitDispatchRecord, EmitOutboxRecord, IntakeTargetRecord, MutationFamilyRecord, MutationVariantRecord, OutcomeRecord, PanelReviewRecord, RunRecord, candidates_from_draft, to_json
+
+
+logger = logging.getLogger(__name__)
 
 
 class RunRepository:
@@ -597,8 +601,13 @@ class RunRepository:
                     1 if is_last_good else 0,
                 ),
             )
-            checkpoint_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            rowid_row = conn.execute("SELECT last_insert_rowid()").fetchone()
+            if not rowid_row or not rowid_row[0]:
+                raise RuntimeError("Failed to retrieve inserted checkpoint rowid")
+            checkpoint_id = int(rowid_row[0])
             row = conn.execute("SELECT * FROM dispatch_control_checkpoints WHERE id = ?", (checkpoint_id,)).fetchone()
+            if not row:
+                raise RuntimeError(f"Checkpoint {checkpoint_id} not found after insertion")
             return self._decode_dispatch_control_checkpoint(dict(row))
 
     @staticmethod
@@ -1810,6 +1819,7 @@ class RunRepository:
         force_engage: bool = False,
         mutation_source: str = "auto",
     ) -> dict[str, Any]:
+        logger.info("create_run_from_text: persona=%s platform=%s heuristic_only=%s", persona_name, platform, heuristic_only)
         bootstrap_analysis = analyze_comment(AnalyzeInput(text=text, platform=platform))
         resolved_persona_name = persona_name
         persona_router = None
@@ -1997,6 +2007,7 @@ class RunRepository:
                     ),
                 )
 
+        logger.info("create_run_from_text: saved run_id=%d persona=%s objective=%s", run_id, persona.name, plan.selected_objective.value)
         return self.get_run(run_id)
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -2259,6 +2270,7 @@ class RunRepository:
         return {"already_promoted": False, "target": self.get_intake_target(target_id), "run": run, "emit": staged_emit}
 
     def record_outcome(self, outcome: OutcomeRecord) -> dict[str, Any]:
+        logger.info("record_outcome: run_id=%s got_reply=%s result=%s", outcome.run_id, outcome.got_reply, outcome.result_label)
         emit_outbox_id = outcome.emit_outbox_id
         emit_dispatch_id = outcome.emit_dispatch_id
 
@@ -2344,6 +2356,7 @@ class RunRepository:
         return [dict(row) for row in rows]
 
     def stage_emit(self, emit: EmitOutboxRecord) -> dict[str, Any]:
+        logger.info("stage_emit: run_id=%s platform=%s transport=%s", emit.run_id, emit.platform, emit.transport)
         with open_db(self.path) as conn:
             conn.execute(
                 """
@@ -2945,6 +2958,7 @@ class RunRepository:
             quiet_hours_end=effective_quiet_hours_end,
         )
         if not bool(governor.get("allow")):
+            logger.info("worker_cycle: governor blocked execution reason=%s", governor.get("reason"))
             return {
                 "dispatch_limit": dispatch_limit,
                 "driver": driver,
@@ -2993,6 +3007,13 @@ class RunRepository:
                     "run_id": result.get("run", {}).get("id") if isinstance(result.get("run"), dict) else None,
                 }
             )
+        logger.info(
+            "worker_cycle: done dispatched=%d redriven=%d approved_found=%d failed_found=%d",
+            batch["dispatched_count"],
+            len(redriven),
+            batch["approved_found"],
+            len(failed),
+        )
         return {
             "dispatch_limit": dispatch_limit,
             "driver": driver,

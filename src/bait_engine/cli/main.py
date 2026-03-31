@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -33,6 +34,9 @@ from bait_engine.planning import DEFAULT_PERSONAS, build_plan, get_persona, sele
 from bait_engine.providers import OpenAICompatibleProvider, TextGenerationProvider
 from bait_engine.intake import fetch_targets, rank_targets, supported_hunt_sources
 from bait_engine.storage import EmitOutboxRecord, IntakeTargetRecord, OutcomeRecord, PanelReviewRecord, RunRepository, build_outcome_scoreboard, build_report, render_report_csv, render_report_markdown, summarize_run, summarize_runs
+
+
+logger = logging.getLogger(__name__)
 
 
 def _build_provider(
@@ -3020,6 +3024,7 @@ def cmd_worker_cycle(
     quiet_hours_start: int | None = None,
     quiet_hours_end: int | None = None,
 ) -> dict:
+    logger.info("worker_cycle: start driver=%s dispatch_limit=%d", driver, dispatch_limit)
     repo = RunRepository(db_path)
     result = repo.worker_cycle(
         dispatch_limit=dispatch_limit,
@@ -3034,6 +3039,11 @@ def cmd_worker_cycle(
         min_seconds_between_actions=min_seconds_between_actions,
         quiet_hours_start=quiet_hours_start,
         quiet_hours_end=quiet_hours_end,
+    )
+    logger.info(
+        "worker_cycle: done dispatched=%s skipped=%s",
+        result.get("dispatched"),
+        result.get("skipped"),
     )
     return {"ok": True, **result}
 
