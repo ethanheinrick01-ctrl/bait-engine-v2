@@ -14,51 +14,101 @@ TACTIC_TEMPLATES: dict[TacticFamily, list[str]] = {
         "that's a lot of words to just restate the same mistake",
         "cool so we're back to the same category error",
         "you turned one confusion into a paragraph",
+        "more words did not improve the underlying error",
+        "three paragraphs, one bad premise, impressive",
+        "this is the same thing you said but slower",
+        "you stretched a bad take into an essay",
+        "length is not the same as argument",
     ],
     TacticFamily.BURDEN_REVERSAL: [
         "why are you treating that like it proves more than it does",
         "what exactly is doing the actual work in that claim",
         "you slipped the premise in and now you're acting like it was established",
+        "that's still your job to prove, not mine to disprove",
+        "saying it confidently doesn't move the burden back",
+        "where's the part where this becomes my problem",
+        "you asserted it, so you own the proof",
+        "i don't have to disprove what you never proved",
     ],
     TacticFamily.AGREE_AND_ACCELERATE: [
         "exactly and by that logic forks are authoritarian now",
         "yeah sure and traffic laws are metaphysical oppression",
         "fully agreed, which is why gravity is basically a hate crime",
+        "right and by that standard chairs are morally suspect",
+        "totally, which means the alphabet has blood on its hands",
+        "agreed, so clouds should also face consequences",
+        "yes and honestly sand should apologize for existing",
+        "correct, this means numbers are a form of violence",
     ],
     TacticFamily.CALM_REDUCTION: [
         "interesting amount of emotion for one comment",
         "you seem weirdly animated about this",
         "that's a lot of feeling packed into not much thought",
+        "you're pretty invested in a claim this shaky",
+        "the volume doesn't fix the logic",
+        "that's a lot of heat for a pretty cold argument",
+        "all caps won't promote the premise",
+        "the feeling is noted, the argument still isn't there",
     ],
     TacticFamily.FAKE_CLARIFICATION: [
         "just to be clear, your point is basically x because vibes, right",
         "so your position is just the sharpened bad version of what you said",
         "wait so you're saying utility equals truth now",
+        "to confirm, your whole case rests on that one unproven part",
+        "so you're arguing the thing is true because you prefer it to be",
+        "just checking, you mean the weaker version of that claim",
+        "so the argument is basically trust me on the hard part",
+        "to restate this fairly, you need step two to be assumed",
     ],
     TacticFamily.ABSURDIST_DERAIL: [
         "none of this addresses the moon's liability here",
         "counterpoint, spiritually this is losing badly",
         "interesting but the forks remain unconvinced",
+        "the staplers have filed a formal objection",
+        "meanwhile the concept of Tuesday has a point",
+        "i'm going to need a comment from the ceiling",
+        "the argument left, the vibes stayed",
+        "honestly the wallpaper makes a stronger case",
     ],
     TacticFamily.SCHOLAR_HEX: [
         "that's instrumentalism with extra steps",
         "you're mixing mechanism with necessity again",
         "this is underdetermined and weirdly confident",
+        "that's a conflation of correlation with determination",
+        "you're treating a defeasible claim like it's entailed",
+        "this collapses the distinction between type and token",
+        "you've got a strong intuition wearing a weak argument's clothes",
+        "that's the fallacy of misplaced concreteness, look it up",
     ],
     TacticFamily.LABEL_AND_LEAVE: [
         "cool, so just cope with punctuation",
         "got it. restatement dressed as rebuttal",
         "nice, a category error in public",
+        "noted, a goalpost migration in real time",
+        "classic, that was the motte and bailey combo",
+        "solid appeal to vibe, no argument detected",
+        "right, an ad hominem where a premise should be",
+        "understood, the retreat into unfalsifiability",
     ],
     TacticFamily.REVERSE_INTERROGATION: [
         "which part of that did you think actually established anything",
         "why are all your questions doing the work your argument didn't",
         "what answer would even satisfy you there",
+        "what would you accept as evidence against your own claim",
+        "which of your premises are you actually willing to defend",
+        "why does your rebuttal consist entirely of new questions",
+        "what's the testable version of what you just said",
+        "can you name one thing that would change your position here",
     ],
     TacticFamily.CONCESSION_MAGNIFIER: [
         "right so you basically conceded the frame already",
         "yeah that little concession kind of ends it",
         "appreciate you quietly giving up the important part there",
+        "that caveat you slipped in there was the whole argument",
+        "you just handed me the load-bearing piece",
+        "the qualifier you buried does a lot of work against you",
+        "that one admission is going to be expensive",
+        "you gave away the key premise and kept going, bold",
     ],
 }
 
@@ -304,6 +354,8 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "this is salvageable, but not like this.",
             "we're done once that step is proven.",
             "clean this up and it might hold.",
+            "plug the premise hole and revisit.",
+            "the support just needs to exist.",
         ],
     },
     "smug_moron_oracle": {
@@ -329,6 +381,10 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "that was not a winning hand.",
             "run it back with evidence.",
             "nice try though.",
+            "you had the tone, not the argument.",
+            "next time bring the receipts.",
+            "the confidence was there, the rest wasn't.",
+            "we'll be here when you're ready.",
         ],
     },
     "calm_unbothered_ghoul": {
@@ -354,6 +410,10 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "that's the endpoint.",
             "done.",
             "end of line.",
+            "the outcome is the same regardless.",
+            "no heat needed, it still fails.",
+            "noted and filed.",
+            "no adjustment necessary.",
         ],
     },
     "fake_sincere_questioner": {
@@ -379,6 +439,10 @@ PERSONA_STYLE_PACKS: dict[str, FlavorPack] = {
             "which claim should we inspect first?",
             "is that fair?",
             "does that seem right to you?",
+            "how does that part get established?",
+            "what does the strong version look like?",
+            "help me see where i'm wrong here.",
+            "can you show the mechanism once?",
         ],
     },
     "absurdist_accelerator": {
@@ -507,14 +571,16 @@ def _inject_anchor_hint(text: str, anchors: list[str], idx: int) -> str:
 
 
 def _apply_pressure_profile(text: str, profile: str, idx: int) -> str:
+    # Use a hash of (idx, len(text)) to break fingerprint patterns from simple modulo.
+    _h = int(hashlib.blake2b(f"{idx}:{len(text)}".encode(), digest_size=4).hexdigest(), 16)
     if profile == "surgical_pinch":
-        return f"premise first, {text}" if idx % 3 == 0 else text
+        return f"premise first, {text}" if _h % 3 == 0 else text
     if profile == "taunt_escalator":
-        return f"{text} keep pretending" if idx % 2 == 0 else f"{text} lol"
+        return f"{text} keep pretending" if _h % 2 == 0 else f"{text} lol"
     if profile == "ice_pick":
         return text.replace("?", "").replace("!", "").strip()
     if profile == "velvet_snare":
-        return f"quick question, {text}" if idx % 2 == 0 else text
+        return f"quick question, {text}" if _h % 2 == 0 else text
     if profile == "chaos_ramp":
         return f"{text} and somehow this gets weirder"
     return text
@@ -528,9 +594,43 @@ def _trim_to_band(text: str, min_words: int, max_words: int) -> str:
     words = text.split()
     if len(words) > max_words:
         return " ".join(words[:max_words])
-    if len(words) < min_words:
-        filler = ["really"] * (min_words - len(words))
-        return " ".join(words + filler)
+    return text
+
+
+def _strip_trailing_period(text: str, punctuation_style: str) -> str:
+    """Strip a trailing period when punctuation_style is loose or minimal."""
+    if punctuation_style in ("loose", "minimal"):
+        if text.endswith("."):
+            return text[:-1]
+    return text
+
+
+def _lowercase_i(text: str, target_register: float) -> str:
+    """Lowercase standalone 'I' and 'I'' contractions when register is low (< 0.35)."""
+    import re
+    if target_register >= 0.35:
+        return text
+    # Replace I'm, I've, I'd, I'll, I'm etc. (I followed by apostrophe)
+    text = re.sub(r"\bI'", "i'", text)
+    # Replace standalone I (not followed by apostrophe)
+    text = re.sub(r"\bI\b", "i", text)
+    return text
+
+
+def _apply_contractions(text: str) -> str:
+    """Replace common un-contracted forms with contractions (whole-word matches)."""
+    import re
+    replacements = [
+        (r"\byou are\b", "you're"),
+        (r"\bdo not\b", "don't"),
+        (r"\bit is\b", "it's"),
+        (r"\bthat is\b", "that's"),
+        (r"\bthey are\b", "they're"),
+        (r"\bwe are\b", "we're"),
+        (r"\bI am\b", "I'm"),
+    ]
+    for pattern, contraction in replacements:
+        text = re.sub(pattern, contraction, text, flags=re.IGNORECASE)
     return text
 
 
@@ -685,6 +785,9 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
         text = _strip_avoid_patterns(text, request.avoid_patterns)
         text = _strip_bot_punctuation(text)
         text = _trim_to_band(text, min_words, max_words)
+        text = _apply_contractions(text)
+        text = _lowercase_i(text, request.target_register)
+        text = _strip_trailing_period(text, request.persona.punctuation_style)
 
         if use_seed:
             tactic = plan.selected_tactic
