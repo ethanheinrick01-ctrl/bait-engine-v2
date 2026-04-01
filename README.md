@@ -36,7 +36,7 @@ This repo starts with the parts that are easiest to lose in chat and hardest to 
 
 ## Test status
 
-**145 tests passing**
+**166 tests passing**
 
 ## Current CLI surface
 
@@ -101,6 +101,22 @@ This repo starts with the parts that are easiest to lose in chat and hardest to 
 - `draft` and `replay` support `--model`, `--base-url`, and `--timeout-seconds`
 - `draft` and `replay` support `--mutation-source` (`auto` or `none`) to control mutation carryover
 - Provider-backed generation falls back cleanly when credentials are absent or the provider fails
+
+### Adaptive diction + human signal hardening
+
+The generation pipeline detects the target's **lexical register** (0.0 = simple, 1.0 = academic) from their text — derived from avg word length, jargon density, evidence marker density, and sentence length. Register shapes output at every layer:
+
+- **Low register** — short words, loose grammar, casual connectors (`cuz`, `tho`, `but like`) between clauses, optional trailing tags (`lol`, `ngl`, `fr`, `tbh`), lowercase `i`, no trailing periods
+- **Mid register** — conversational but literate, softer connectors (`though`, `but`, `honestly`), occasional `lol`/`ngl`
+- **High register** — matches or slightly exceeds target vocabulary, no casual connectors or trailing tags
+
+Additional hardening applied to all output regardless of register:
+- Colons and semicolons are penalized by the critic and stripped in post-processing
+- Contractions enforced (`you are` → `you're`, `do not` → `don't`, etc.)
+- Trailing periods stripped for casual personas (`loose`/`minimal` punctuation style)
+- Pressure profiles use hashed entropy instead of fixed `idx % N` cycles to avoid fingerprinting
+- Each tactic has 7–8 template strings (up from 3) to reduce repetition over time
+- Imperfect grammar is explicitly permitted when it sounds more natural
 
 ### Hunt intake controls
 - `hunt-preview` supports `--persona auto` (Phase 12 Artery 1 scaffold)
