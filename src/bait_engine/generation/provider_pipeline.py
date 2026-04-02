@@ -4,7 +4,7 @@ import logging
 
 from bait_engine.generation.contracts import CandidateReply, DraftRequest, DraftResult
 from bait_engine.generation.critic import critique_candidate, starts_with_agreement_language
-from bait_engine.generation.llm_writer import generate_candidates_via_provider
+from bait_engine.generation.llm_writer import generate_candidates_via_provider, _is_refusal
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates
 from bait_engine.providers.base import TextGenerationProvider
@@ -74,22 +74,42 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
     return fallback
 
 
+_MAX_PROVIDER_ATTEMPTS = 2
+
+
+def _strip_refusals(candidates: list[CandidateReply]) -> list[CandidateReply]:
+    """Remove any candidate whose text is an LLM refusal."""
+    return [c for c in candidates if not _is_refusal(c.text)]
+
+
 def draft_candidates_with_provider(
     request: DraftRequest,
     provider: TextGenerationProvider | None = None,
 ) -> DraftResult:
     provider = provider or OpenAICompatibleProvider()
 
-    raw_candidates = []
+    raw_candidates: list[CandidateReply] = []
     if provider.is_available():
-        try:
-            raw_candidates = generate_candidates_via_provider(request, provider)
-        except RuntimeError as exc:
-            _log_provider_failure(request, provider, exc, unexpected=False)
-            raw_candidates = []
-        except Exception as exc:
-            _log_provider_failure(request, provider, exc, unexpected=True)
-            raw_candidates = []
+        for attempt in range(_MAX_PROVIDER_ATTEMPTS):
+            try:
+                raw_candidates = generate_candidates_via_provider(request, provider)
+            except RuntimeError as exc:
+                _log_provider_failure(request, provider, exc, unexpected=False)
+                raw_candidates = []
+            except Exception as exc:
+                _log_provider_failure(request, provider, exc, unexpected=True)
+                raw_candidates = []
+
+            # Strip any refusals that slipped through the parser
+            raw_candidates = _strip_refusals(raw_candidates)
+            if raw_candidates:
+                break
+            logger.warning(
+                "Provider attempt %d/%d returned only refusals; %s",
+                attempt + 1,
+                _MAX_PROVIDER_ATTEMPTS,
+                "retrying" if attempt + 1 < _MAX_PROVIDER_ATTEMPTS else "falling back to heuristic",
+            )
 
     if not raw_candidates:
         raw_candidates = generate_candidates(request)
@@ -97,4 +117,14 @@ def draft_candidates_with_provider(
     critiqued = [critique_candidate(candidate, request.persona) for candidate in raw_candidates]
     guarded = _enforce_disagreement(critiqued, request)
     ranked = rank_candidates(guarded)
+
+    # Final safety net: drop any refusals that survived critic + ranking
+    ranked = _strip_refusals(ranked)
+    if not ranked:
+        logger.warning("All ranked candidates were refusals; regenerating via heuristic")
+        heuristic = generate_candidates(request)
+        critiqued = [critique_candidate(c, request.persona) for c in heuristic]
+        guarded = _enforce_disagreement(critiqued, request)
+        ranked = rank_candidates(guarded)
+
     return DraftResult(request=request, candidates=ranked)

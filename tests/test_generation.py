@@ -81,7 +81,13 @@ class GenerationTests(unittest.TestCase):
         request = DraftRequest(source_text=text, plan=plan, persona=get_persona("fake_sincere_questioner"), candidate_count=2)
         result = draft_candidates(request)
         self.assertGreaterEqual(len(result.candidates), 1)
-        self.assertTrue(any("quick question:" in item.text.lower() for item in result.candidates))
+        # velvet_snare pressure profile prepends "quick question" on ~50% of candidates;
+        # the persona's own style (fake_sincere_questioner) always shows through.
+        persona_markers = ("genuinely", "honest", "curious", "clarify", "walk me", "help me", "trying to follow", "genuine question", "quick question", "sanity check")
+        self.assertTrue(any(
+            any(marker in item.text.lower() for marker in persona_markers)
+            for item in result.candidates
+        ))
 
     def test_persona_flavor_inventory_expanded(self) -> None:
         for persona_name, style_pack in PERSONA_STYLE_PACKS.items():

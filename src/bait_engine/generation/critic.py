@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bait_engine.generation.contracts import CandidateReply
+from bait_engine.generation.llm_writer import _is_refusal
 from bait_engine.planning.personas import PersonaProfile
 
 
@@ -36,6 +37,9 @@ def critique_candidate(candidate: CandidateReply, persona: PersonaProfile) -> Ca
     penalty = 0.0
     text_lower = candidate.text.lower()
     words = candidate.text.split()
+
+    if _is_refusal(candidate.text):
+        return candidate.model_copy(update={"critic_penalty": 1.0, "critic_notes": ["LLM refusal — auto-rejected"]})
 
     if len(words) > persona.length_band_words[1]:
         penalty += 0.18
