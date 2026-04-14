@@ -512,6 +512,11 @@ _QUESTION_LEAD_TOKENS = {
     "will", "would", "can", "could", "do", "does", "did", "is", "are", "am",
     "was", "were", "should", "why", "what", "how", "when", "where", "who",
 }
+_LOW_SIGNAL_SUBJECT_TOKENS = {
+    "lol", "lmao", "rofl", "xd", "idk", "d", "uh", "umm", "pls", "please",
+    "prom", "promise", "working", "hard", "patient", "ready", "soon",
+    "im", "i'm", "ive", "i've", "youll", "you'll", "its", "it's",
+}
 
 
 def reset_style_memory() -> None:
@@ -869,6 +874,8 @@ def _generic_anchor(subject: str, *, fragment: str = "") -> str:
         return "that question angle"
     if _looks_like_question_subject(cleaned):
         return "that question angle"
+    if _is_low_signal_subject(cleaned):
+        return "that angle"
 
     words = cleaned.split()
     if words and words[0].lower().endswith("ing"):
@@ -898,6 +905,28 @@ def _looks_like_question_subject(subject: str) -> bool:
     return lead in _QUESTION_LEAD_TOKENS or normalized.endswith("?")
 
 
+def _is_low_signal_subject(subject: str) -> bool:
+    cleaned = " ".join((subject or "").strip().split()).strip(" ,.-?")
+    if not cleaned:
+        return True
+    lowered = cleaned.lower()
+    if any(ch in lowered for ch in ("-", "(", ")", ":")):
+        return True
+    tokens = lowered.split()
+    if not tokens:
+        return True
+    if tokens[0] in {"i", "i'm", "im", "you", "you'll", "youre", "it's", "its"} and len(tokens) <= 6:
+        return True
+    low_signal_hits = sum(1 for token in tokens if token in _LOW_SIGNAL_SUBJECT_TOKENS)
+    if low_signal_hits >= 2:
+        return True
+    # Avoid fragments that are mostly short glue words and can become broken templates.
+    long_tokens = [token for token in tokens if len(token) >= 5]
+    if len(long_tokens) <= 1 and len(tokens) >= 4:
+        return True
+    return False
+
+
 def _subject_topic(subject: str, *, fragment: str = "") -> str:
     cleaned = " ".join((subject or "").strip().split()).strip(" ,.-?")
     if not cleaned:
@@ -906,6 +935,8 @@ def _subject_topic(subject: str, *, fragment: str = "") -> str:
         return "that question"
     if _looks_like_question_subject(cleaned):
         return "that question"
+    if _is_low_signal_subject(cleaned):
+        return "that claim"
     return cleaned
 
 
@@ -1042,7 +1073,12 @@ def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: s
             else:
                 frame = f"{topic} is still the trick you're hiding"
         elif tactic == TacticFamily.ESSAY_COLLAPSE:
-            frame = f"{topic} is still one bad premise"
+            if topic == "that question":
+                frame = "what claim is that question supposed to prove"
+            elif topic == "that claim":
+                frame = "that's still one bad premise"
+            else:
+                frame = f"{topic} is still one bad premise"
         elif tactic == TacticFamily.BURDEN_REVERSAL:
             frame = f"where do you actually prove {topic}"
         elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
@@ -1099,7 +1135,9 @@ def _render_source_frame(frame: str, request: DraftRequest, idx: int, seed: int,
         elif hint == "vary_cadence" and "," not in text:
             text = text.replace(" is ", ", is ", 1)
 
-    if closer and idx % 3 == 1 and len(text.split()) + len(closer.split()) <= max_words:
+    objective = request.plan.selected_objective.value
+    objective_requires_question = objective in _OBJECTIVE_REQUIRES_QUESTION
+    if closer and (not objective_requires_question) and idx % 3 == 1 and len(text.split()) + len(closer.split()) <= max_words:
         text = f"{text} {closer}"
     return text
 

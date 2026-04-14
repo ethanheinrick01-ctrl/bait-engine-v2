@@ -4,6 +4,7 @@ import logging
 
 from bait_engine.generation.contracts import CandidateReply, DraftRequest, DraftResult
 from bait_engine.generation.critic import critique_candidate, objective_shape_ok, starts_with_agreement_language
+from bait_engine.generation.fallbacks import build_disagreement_fallbacks
 from bait_engine.generation.llm_writer import generate_candidates_via_provider
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates
@@ -12,18 +13,6 @@ from bait_engine.providers.openai_compatible import OpenAICompatibleProvider
 
 
 logger = logging.getLogger(__name__)
-
-
-DISAGREE_FALLBACKS = [
-    "that leap still doesn't prove your claim",
-    "you're skipping the step that actually matters",
-    "useful isn't the same as true, that's the gap",
-]
-QUESTION_DISAGREE_FALLBACKS = [
-    "where is the missing step between premise and conclusion?",
-    "what proof is supposed to carry that leap?",
-    "how does that line establish the actual claim?",
-]
 
 
 def _provider_context(request: DraftRequest, provider: TextGenerationProvider) -> dict[str, str | int | None]:
@@ -63,9 +52,7 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
     if filtered:
         return filtered
 
-    objective = request.plan.selected_objective.value
-    requires_question = objective in {"hook", "resurrect", "stall", "branch_split"}
-    fallback_pool = QUESTION_DISAGREE_FALLBACKS if requires_question else DISAGREE_FALLBACKS
+    fallback_pool = build_disagreement_fallbacks(request)
     fallback: list[CandidateReply] = []
     for idx in range(request.candidate_count):
         text = fallback_pool[idx % len(fallback_pool)]
