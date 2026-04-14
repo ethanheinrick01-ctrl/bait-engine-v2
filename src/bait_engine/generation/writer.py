@@ -486,6 +486,9 @@ _SOURCE_STOPWORDS = {
     "meant", "more", "only", "part", "really", "same", "should", "still",
     "that", "their", "there", "these", "thing", "this", "those", "what",
     "when", "where", "which", "while", "with", "would", "your", "youre",
+    "keep", "saying", "worked", "work", "have", "open", "until", "usually",
+    "average", "another", "person", "hours", "hour", "them", "into", "been",
+    "added", "tipping", "sales", "there",
 }
 _OBJECTIVE_REQUIRES_QUESTION = {"hook", "resurrect", "stall", "branch_split"}
 _OBJECTIVE_REJECTS_QUESTION = {"collapse", "audience_win", "exit_on_top"}
@@ -494,6 +497,21 @@ _DOES_NOT_MAKE_RE = re.compile(r"\b(?P<left>[^,.!?;]+?)\s+(?:does not|doesn't)\s
 _IS_NOT_RE = re.compile(r"\b(?P<left>[^,.!?;]+?)\s+(?:is not|isn't|are not|aren't)\s+(?P<right>[^,.!?;]+)", re.IGNORECASE)
 _LEADING_FILLER_RE = re.compile(r"^(?:that|this|these|those|your|you're|you are)\s+", re.IGNORECASE)
 _HARD_OPENERS = {"translation", "diagnosis", "mechanically", "version that survives contact"}
+_GENERIC_WEAK_TOKENS = {
+    "keep", "saying", "worked", "work", "would", "have", "there", "been",
+    "open", "until", "usually", "average", "another", "person", "hours", "hour",
+    "i", "you", "we", "they", "he", "she", "it", "a", "an", "the", "and",
+    "or", "but", "in", "on", "to", "for", "of", "with", "at", "by",
+    "that", "this", "these", "those",
+    "will", "would", "can", "could", "do", "does", "did", "is", "are", "am",
+    "was", "were", "why", "what", "how", "when", "where", "who", "ever",
+    "really", "cant", "can't", "myself", "yourself", "himself", "herself", "ourselves", "themselves", "see",
+}
+_AUXILIARY_TAIL_TOKENS = {"is", "are", "was", "were", "be", "being", "been", "would", "have", "has", "had"}
+_QUESTION_LEAD_TOKENS = {
+    "will", "would", "can", "could", "do", "does", "did", "is", "are", "am",
+    "was", "were", "should", "why", "what", "how", "when", "where", "who",
+}
 
 
 def reset_style_memory() -> None:
@@ -787,12 +805,38 @@ def _short_fragment(fragment: str, limit: int = 7) -> str:
 
 def _clean_focus_part(value: str) -> str:
     cleaned = " ".join((value or "").strip().split())
+    cleaned = re.sub(r"\byou(?:'d| would)\s+have\s+to\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bwould\s+have\s+to\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip(" ,.-")
     cleaned = _LEADING_FILLER_RE.sub("", cleaned)
+    words = cleaned.split()
+    while words and words[-1].lower() in _AUXILIARY_TAIL_TOKENS:
+        words.pop()
+    cleaned = " ".join(words)
     return cleaned.strip(" ,.-")
 
 
+def _generic_subject(fragment: str) -> str:
+    normalized = _clean_focus_part(fragment)
+    if not normalized:
+        return "that claim"
+
+    words = normalized.split()
+    strong_words = [word for word in words if word.lower() not in _GENERIC_WEAK_TOKENS]
+    candidate_words = strong_words if strong_words else words
+    candidate = " ".join(candidate_words[:6]).strip(" ,.-")
+    if candidate:
+        return candidate
+
+    tokens = [token for token in _source_terms(fragment) if token not in _GENERIC_WEAK_TOKENS]
+    if tokens:
+        return " ".join(tokens[:4]).strip(" ,.-")
+    return "that claim"
+
+
 def _extract_focus_frame(fragment: str) -> dict[str, str]:
+    lead_token = (fragment or "").strip().split()
+    question_like = bool(lead_token and lead_token[0].lower().strip(" ,.-") in _QUESTION_LEAD_TOKENS)
     normalized = _clean_focus_part(fragment)
     for pattern, kind in (
         (_CONFUSION_RE, "confusion"),
@@ -805,16 +849,64 @@ def _extract_focus_frame(fragment: str) -> dict[str, str]:
         left = _clean_focus_part(match.group("left"))
         right = _clean_focus_part(match.group("right"))
         if left and right:
-            return {"kind": kind, "left": left, "right": right}
-    subject = _short_fragment(normalized, limit=7)
-    return {"kind": "generic", "subject": subject or "that claim"}
+            return {"kind": kind, "left": left, "right": right, "question_like": "yes" if question_like else "no"}
+    subject = _short_fragment(_generic_subject(fragment) or normalized, limit=7)
+    return {"kind": "generic", "subject": subject or "that claim", "question_like": "yes" if question_like else "no"}
 
 
 def _focus_signature(focus: dict[str, str]) -> str:
     kind = focus.get("kind") or "generic"
     if kind == "generic":
-        return f"{kind}:{focus.get('subject', '')}"
+        return f"{kind}:{focus.get('subject', '')}:{focus.get('question_like', 'no')}"
     return f"{kind}:{focus.get('left', '')}|{focus.get('right', '')}"
+
+
+def _generic_anchor(subject: str, *, fragment: str = "") -> str:
+    cleaned = " ".join((subject or "").split()).strip(" ,.-")
+    if not cleaned:
+        return "that angle"
+    if "?" in fragment:
+        return "that question angle"
+    if _looks_like_question_subject(cleaned):
+        return "that question angle"
+
+    words = cleaned.split()
+    if words and words[0].lower().endswith("ing"):
+        return "that angle"
+    verbal_tokens = {"is", "are", "was", "were", "be", "being", "been", "looks", "look", "seems", "seem", "feels", "feel", "has", "have", "had"}
+    topical = [
+        word
+        for word in words
+        if word.lower() not in verbal_tokens and word.lower() not in _GENERIC_WEAK_TOKENS
+    ]
+    topical_lower = [word.lower() for word in topical if word]
+    math_tokens = {"math", "percent", "menu", "price", "prices", "wage", "wages", "sales", "tips", "hour", "hours"}
+    if any(token in math_tokens for token in topical_lower):
+        return "that wage math angle"
+
+    return "that angle"
+
+
+def _looks_like_question_subject(subject: str) -> bool:
+    normalized = " ".join((subject or "").strip().split())
+    if not normalized:
+        return False
+    lowered = normalized.lower().strip(" ?")
+    if not lowered:
+        return False
+    lead = lowered.split()[0]
+    return lead in _QUESTION_LEAD_TOKENS or normalized.endswith("?")
+
+
+def _subject_topic(subject: str, *, fragment: str = "") -> str:
+    cleaned = " ".join((subject or "").strip().split()).strip(" ,.-?")
+    if not cleaned:
+        return "that claim"
+    if "?" in fragment:
+        return "that question"
+    if _looks_like_question_subject(cleaned):
+        return "that question"
+    return cleaned
 
 
 def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: str = "lead") -> str:
@@ -882,7 +974,7 @@ def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: s
             elif tactic == TacticFamily.FAKE_CLARIFICATION:
                 frame = f"you're still acting like {left} gets you {right}"
             elif tactic == TacticFamily.LABEL_AND_LEAVE:
-                frame = f"treating {left} like {right} is still category slop"
+                frame = f"treating {left} like {right} is still a label swap"
             elif tactic == TacticFamily.REVERSE_INTERROGATION:
                 frame = f"what makes {left} enough for {right}"
             elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
@@ -891,7 +983,7 @@ def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: s
                 frame = f"{left} still {relation} {right}, and that's the problem"
         elif role == "sting":
             if tactic == TacticFamily.LABEL_AND_LEAVE:
-                frame = f"{left} {relation} {right}, that's category slop"
+                frame = f"{left} {relation} {right}, that's just a label swap"
             elif tactic == TacticFamily.BURDEN_REVERSAL:
                 frame = f"{left} {relation} {right}, that's what you never proved"
             elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
@@ -914,7 +1006,7 @@ def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: s
             else:
                 frame = f"{left} isn't {right}, that's the whole gap"
         elif tactic == TacticFamily.LABEL_AND_LEAVE:
-            frame = f"treating {left} like {right} is category slop"
+            frame = f"treating {left} like {right} is a label swap"
         elif tactic == TacticFamily.REVERSE_INTERROGATION:
             frame = f"what makes {left} enough for {right}"
         elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
@@ -923,46 +1015,57 @@ def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: s
             frame = f"{left} doesn't get you {right}"
     else:
         subject = focus.get("subject") or "that claim"
+        question_like = focus.get("question_like") == "yes"
+        topic = _subject_topic(subject, fragment="?" if question_like else fragment)
+        generic_anchor = _generic_anchor(subject, fragment="?" if question_like else fragment)
         if role == "support":
             if tactic == TacticFamily.BURDEN_REVERSAL:
-                frame = f"you still never proved {subject}"
+                frame = f"you still never proved {topic}"
             elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
-                frame = f"you're still asking {subject} to carry way more than it can"
+                frame = f"you're still asking {topic} to carry way more than it can"
             elif tactic == TacticFamily.FAKE_CLARIFICATION:
-                frame = f"you're still asking {subject} to do all the work here"
+                frame = f"you're still asking {topic} to do all the work here"
+            elif tactic == TacticFamily.LABEL_AND_LEAVE:
+                frame = f"{generic_anchor} is still relabeling, not proof"
             elif tactic == TacticFamily.REVERSE_INTERROGATION:
-                frame = f"what evidence is supposed to make {subject} true"
+                if topic == "that question":
+                    frame = "what claim is that question supposed to settle"
+                else:
+                    frame = f"what evidence is supposed to make {topic} true"
             else:
-                frame = f"{subject} is still doing all the work for no reason"
+                frame = f"{topic} is still doing all the work for no reason"
         elif role == "sting":
             if tactic == TacticFamily.LABEL_AND_LEAVE:
-                frame = f"{subject} is still confidence cosplay"
+                frame = f"{generic_anchor} is still just labeling, not proof"
             elif tactic == TacticFamily.BURDEN_REVERSAL:
-                frame = f"{subject} is still the part you never proved"
+                frame = f"{topic} is still the part you never proved"
             else:
-                frame = f"{subject} is still the trick you're hiding"
+                frame = f"{topic} is still the trick you're hiding"
         elif tactic == TacticFamily.ESSAY_COLLAPSE:
-            frame = f"{subject} is still one bad premise"
+            frame = f"{topic} is still one bad premise"
         elif tactic == TacticFamily.BURDEN_REVERSAL:
-            frame = f"where do you actually prove {subject}"
+            frame = f"where do you actually prove {topic}"
         elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
-            frame = f"if {subject} counts, then literally anything counts"
+            frame = f"if {topic} counts, then literally anything counts"
         elif tactic == TacticFamily.CALM_REDUCTION:
-            frame = f"{subject} is still unsupported"
+            frame = f"{topic} is still unsupported"
         elif tactic == TacticFamily.FAKE_CLARIFICATION:
-            frame = f"so {subject} is supposed to do all the work here"
+            frame = f"so {topic} is supposed to do all the work here"
         elif tactic == TacticFamily.ABSURDIST_DERAIL:
-            frame = f"{subject} is doing cartwheels and still proving nothing"
+            frame = f"{topic} is doing cartwheels and still proving nothing"
         elif tactic == TacticFamily.SCHOLAR_HEX:
-            frame = f"{subject} is still underdetermined"
+            frame = f"{topic} is still underdetermined"
         elif tactic == TacticFamily.LABEL_AND_LEAVE:
-            frame = f"{subject} is just confidence cosplay"
+            frame = f"{generic_anchor} is confidence without proof"
         elif tactic == TacticFamily.REVERSE_INTERROGATION:
-            frame = f"what evidence is meant to make {subject} true"
+            if topic == "that question":
+                frame = "what claim is that question supposed to prove"
+            else:
+                frame = f"what evidence is meant to make {topic} true"
         elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
-            frame = f"that caveat around {subject} is the whole problem"
+            frame = f"that caveat around {topic} is the whole problem"
         else:
-            frame = f"{subject} is not doing the work you think"
+            frame = f"{topic} is not doing the work you think"
 
     if objective in _OBJECTIVE_REQUIRES_QUESTION and not frame.endswith("?"):
         return f"{frame}?"

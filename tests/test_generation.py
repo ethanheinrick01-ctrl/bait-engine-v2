@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -8,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from bait_engine.analysis import AnalyzeInput, analyze_comment
-from bait_engine.core.types import TacticalObjective
+from bait_engine.core.types import TacticalObjective, TacticFamily
 from bait_engine.generation import CandidateReply, DraftRequest, MutationSeed, build_prompt_payload, draft_candidates
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates, reset_style_memory
@@ -116,6 +117,25 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual([item.weave_role for item in seeded[:3]], ["lead", "support", "sting"])
         self.assertTrue(any("mechanism" in item.text.lower() for item in seeded[:3]))
         self.assertTrue(any("useful" in item.text.lower() for item in seeded[:3]))
+
+    def test_question_subjects_do_not_emit_malformed_sting_templates(self) -> None:
+        text = "Will you ever forgive Israel? People forgave quickly but I cannot."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant").model_copy(
+            update={
+                "selected_objective": TacticalObjective.TILT,
+                "selected_tactic": TacticFamily.LABEL_AND_LEAVE,
+            }
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=4)
+        seeded = generate_candidates(request)
+
+        malformed = re.compile(
+            r"^(will|would|can|could|do|does|did|is|are|why|what|how|when|where)\b.*\bis still the trick you're hiding\??$",
+            re.IGNORECASE,
+        )
+        self.assertGreaterEqual(len(seeded), 1)
+        self.assertFalse(any(malformed.match(item.text.strip()) for item in seeded))
 
     def test_grounded_candidate_outranks_generic_one(self) -> None:
         generic = CandidateReply(

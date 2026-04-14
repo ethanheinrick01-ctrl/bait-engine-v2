@@ -1775,9 +1775,13 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
         active = " active" if run_id == active_run_id else ""
 
         candidates = run.get("candidates") or []
-        top_candidates = candidates[:3]
+        ranked_candidates = sorted(
+            list(candidates),
+            key=lambda item: int(item.get("rank_index") or 9999) if isinstance(item, dict) else 9999,
+        )
+        top_candidates = ranked_candidates[:3]
         first_candidate_text = ""
-        for candidate in candidates:
+        for candidate in ranked_candidates:
             candidate_text = str(candidate.get("text") or "").strip() if isinstance(candidate, dict) else ""
             if candidate_text:
                 first_candidate_text = candidate_text

@@ -12,9 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 DISAGREE_FALLBACKS = [
-    "nah, that conclusion doesn't actually follow",
-    "not really, you're skipping the part that matters",
-    "that's a neat framing, but it's still wrong on impact",
+    "that leap still doesn't prove your claim",
+    "you're skipping the step that actually matters",
+    "useful isn't the same as true, that's the gap",
+]
+QUESTION_DISAGREE_FALLBACKS = [
+    "where is the missing step between premise and conclusion?",
+    "what proof is supposed to carry that leap?",
+    "how does that line establish the actual claim?",
 ]
 
 
@@ -26,9 +31,12 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
     if filtered:
         return filtered
 
+    objective = request.plan.selected_objective.value
+    requires_question = objective in {"hook", "resurrect", "stall", "branch_split"}
+    fallback_pool = QUESTION_DISAGREE_FALLBACKS if requires_question else DISAGREE_FALLBACKS
     fallback: list[CandidateReply] = []
     for idx in range(request.candidate_count):
-        text = DISAGREE_FALLBACKS[idx % len(DISAGREE_FALLBACKS)]
+        text = fallback_pool[idx % len(fallback_pool)]
         fallback.append(
             CandidateReply(
                 text=text,
@@ -61,6 +69,48 @@ def _filter_valid_candidates(candidates: list[CandidateReply], request: DraftReq
     return valid
 
 
+def _backfill_candidate_floor(
+    validated: list[CandidateReply],
+    critiqued: list[CandidateReply],
+    request: DraftRequest,
+) -> list[CandidateReply]:
+    objective = request.plan.selected_objective.value
+    if objective == "do_not_engage":
+        return validated
+
+    floor = min(max(1, request.candidate_count), 3)
+    if len(validated) >= floor:
+        return validated
+
+    selected = list(validated)
+    seen = {candidate.text.strip().lower() for candidate in selected if candidate.text.strip()}
+    for candidate in critiqued:
+        if len(selected) >= floor:
+            break
+        normalized = candidate.text.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        if starts_with_agreement_language(candidate.text):
+            continue
+        if not objective_shape_ok(candidate.text, objective):
+            continue
+        if candidate.grounding_score < 0.08:
+            continue
+        seen.add(normalized)
+        selected.append(
+            candidate.model_copy(
+                update={
+                    "generation_source": (
+                        f"{candidate.generation_source}_floor_backfill"
+                        if candidate.generation_source
+                        else "floor_backfill"
+                    )
+                }
+            )
+        )
+    return selected
+
+
 def draft_candidates(request: DraftRequest) -> DraftResult:
     logger.debug(
         "draft_candidates: persona=%s objective=%s tactic=%s count=%d",
@@ -80,7 +130,8 @@ def draft_candidates(request: DraftRequest) -> DraftResult:
         for candidate in raw
     ]
     validated = _filter_valid_candidates(critiqued, request)
-    guarded = _enforce_disagreement(validated, request)
+    with_floor = _backfill_candidate_floor(validated, critiqued, request)
+    guarded = _enforce_disagreement(with_floor, request)
     ranked = rank_candidates(guarded)
     logger.debug("draft_candidates: produced %d candidates", len(ranked))
     return DraftResult(request=request, candidates=ranked)

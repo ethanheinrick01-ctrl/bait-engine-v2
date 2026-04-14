@@ -394,6 +394,53 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(metadata.get("combined_top_candidates"))
         self.assertEqual(metadata.get("combined_candidate_rank_indexes"), [1, 2, 3])
 
+    def test_build_reply_envelope_mega_bait_skips_low_signal_framing_clauses(self) -> None:
+        run = {
+            "id": 104,
+            "platform": "reddit",
+            "persona": "dry_midwit_savant",
+            "selected_objective": "tilt",
+            "selected_tactic": "calm_reduction",
+            "exit_state": "one_more_spike",
+            "candidates": [
+                {
+                    "text": "that conclusion doesn't actually follow",
+                    "rank_index": 1,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "weave_role": "lead",
+                    "rank_score": 0.91,
+                },
+                {
+                    "text": "you're skipping the missing step",
+                    "rank_index": 2,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "weave_role": "support",
+                    "rank_score": 0.88,
+                },
+                {
+                    "text": "that's a neat framing. that's the gap",
+                    "rank_index": 3,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "weave_role": "sting",
+                    "rank_score": 0.86,
+                },
+            ],
+        }
+
+        envelope = build_reply_envelope(
+            run,
+            selection_strategy="mega_bait",
+            thread_id="t3_deadbeef",
+            reply_to_id="t1_abc",
+        )
+
+        body = envelope["body"].lower()
+        self.assertIn("that's the gap", body)
+        self.assertNotIn("that's a neat framing", body)
+
     def test_build_reply_envelope_surfaces_selection_filter_fallback(self) -> None:
         run = {
             "id": 102,

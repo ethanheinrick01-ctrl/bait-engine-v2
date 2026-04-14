@@ -63,6 +63,7 @@ _BLEND_RELATION_MARKERS = (
     " enough for ",
     " get you ",
 )
+_LOW_SIGNAL_CLAUSE_RE = re.compile(r"^that'?s (?:a |an )?[a-z]+ framing$", re.IGNORECASE)
 
 
 def _normalize_sentence(text: str) -> str:
@@ -114,7 +115,7 @@ def _candidate_clauses(text: str) -> list[str]:
 
 def _looks_like_sting(clause: str) -> bool:
     lowered = f" {clause.lower()} "
-    return clause.lower().startswith("that's ") or any(marker in lowered for marker in _BLEND_STING_MARKERS)
+    return any(marker in lowered for marker in _BLEND_STING_MARKERS)
 
 
 def _looks_like_relation(clause: str) -> bool:
@@ -130,10 +131,25 @@ def _lowercase_lead(text: str) -> str:
     return text
 
 
+def _is_low_signal_clause(clause: str) -> bool:
+    cleaned = " ".join((clause or "").strip().split())
+    if not cleaned:
+        return True
+    lowered = cleaned.lower().rstrip(".?!")
+    if lowered in {"that's neat framing", "that's a neat framing", "thats a neat framing"}:
+        return True
+    if _LOW_SIGNAL_CLAUSE_RE.match(lowered):
+        return True
+    return False
+
+
 def _best_clause(clauses: list[str], *, predicate: callable[[str], bool] | None = None) -> str | None:
     filtered = [clause for clause in clauses if predicate(clause)] if predicate is not None else list(clauses)
     if not filtered:
         return None
+    high_signal = [clause for clause in filtered if not _is_low_signal_clause(clause)]
+    if high_signal:
+        filtered = high_signal
     return max(filtered, key=lambda clause: (len(clause.split()), len(clause)))
 
 
