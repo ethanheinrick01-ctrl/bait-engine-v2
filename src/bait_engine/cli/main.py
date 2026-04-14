@@ -1782,12 +1782,19 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
             if candidate_text:
                 first_candidate_text = candidate_text
                 break
+        selected_objective = str(run.get("selected_objective") or "")
+        no_candidate_reason = "No candidate output stored for this run yet."
+        if selected_objective == "do_not_engage":
+            no_candidate_reason = (
+                "Selectivity gate skipped this target (`do_not_engage`). "
+                "Enable `force engage` in Quick draft to generate candidates anyway."
+            )
         output_preview_html = (
             '<div class="response" style="margin-top:8px;"><span class="small">Generated output preview</span>'
             f'<pre style="white-space:pre-wrap; background:#0f1115; border:1px solid #2b313d; border-radius:8px; padding:10px; margin:6px 0 0 0;">{html.escape(first_candidate_text[:400])}</pre>'
             '</div>'
             if first_candidate_text
-            else '<div class="response" style="margin-top:8px;"><span class="small">Generated output preview</span><div class="small">No candidate output stored for this run yet.</div></div>'
+            else f'<div class="response" style="margin-top:8px;"><span class="small">Generated output preview</span><div class="small">{html.escape(no_candidate_reason)}</div></div>'
         )
         run_persona_js = _js_call_arg(run.get("persona") or "dry_midwit_savant")
         run_platform_js = _js_call_arg(run.get("platform") or "reddit")
@@ -2068,6 +2075,7 @@ code {{ font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monos
         <label>Persona <select id="draftPersona" style="margin-left:8px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px; appearance:auto; -webkit-appearance:menulist; cursor:pointer;">{persona_options_html}</select></label>
         <label>Platform <select id="draftPlatform" style="margin-left:8px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px; appearance:auto; -webkit-appearance:menulist; cursor:pointer;">{platform_options_html}</select></label>
         <label>Count <input id="draftCount" type="number" min="1" value="5" style="margin-left:8px; width:84px; background:#0f1115; color:#e9edf3; border:1px solid #2b313d; border-radius:8px; padding:8px;" /></label>
+        <label><input id="draftForceEngage" type="checkbox" checked /> force engage</label>
       </div>
       <div class="actions">
         <button id="draftSubmitButton" class="button" type="button" style="border:none; cursor:pointer;">Draft new run</button>
@@ -2118,6 +2126,7 @@ const STORAGE_KEYS = {{
   persona: 'bait-engine:draft-persona',
   platform: 'bait-engine:draft-platform',
   count: 'bait-engine:draft-count',
+  forceEngage: 'bait-engine:draft-force-engage',
   lastRunId: 'bait-engine:last-run-id',
   workerIncludeFailedRedrive: 'bait-engine:worker-include-failed-redrive',
   workerRedriveLimit: 'bait-engine:worker-redrive-limit',
@@ -2129,6 +2138,7 @@ const draftText = document.getElementById('draftText');
 const draftPersona = document.getElementById('draftPersona');
 const draftPlatform = document.getElementById('draftPlatform');
 const draftCount = document.getElementById('draftCount');
+const draftForceEngage = document.getElementById('draftForceEngage');
 const openLatestRunLink = document.getElementById('openLatestRunLink');
 const outboxStatus = document.getElementById('outboxStatus');
 const mutateWinnerLimit = document.getElementById('mutateWinnerLimit');
@@ -2302,6 +2312,12 @@ function restoreDraftDefaults() {{
   draftPersona.value = localStorage.getItem(STORAGE_KEYS.persona) || draftPersona.value;
   draftPlatform.value = localStorage.getItem(STORAGE_KEYS.platform) || draftPlatform.value;
   draftCount.value = localStorage.getItem(STORAGE_KEYS.count) || draftCount.value;
+  if (draftForceEngage) {{
+    const forceEngageStored = localStorage.getItem(STORAGE_KEYS.forceEngage);
+    if (forceEngageStored !== null) {{
+      draftForceEngage.checked = forceEngageStored === 'true';
+    }}
+  }}
   if (workerIncludeFailedRedrive) {{
     workerIncludeFailedRedrive.checked = localStorage.getItem(STORAGE_KEYS.workerIncludeFailedRedrive) === 'true';
   }}
@@ -2323,6 +2339,9 @@ function persistDraftDefaults() {{
   localStorage.setItem(STORAGE_KEYS.persona, draftPersona.value || 'dry_midwit_savant');
   localStorage.setItem(STORAGE_KEYS.platform, draftPlatform.value || 'reddit');
   localStorage.setItem(STORAGE_KEYS.count, draftCount.value || '5');
+  if (draftForceEngage) {{
+    localStorage.setItem(STORAGE_KEYS.forceEngage, draftForceEngage.checked ? 'true' : 'false');
+  }}
   if (workerIncludeFailedRedrive) {{
     localStorage.setItem(STORAGE_KEYS.workerIncludeFailedRedrive, workerIncludeFailedRedrive.checked ? 'true' : 'false');
   }}
@@ -2351,7 +2370,7 @@ async function submitDraft() {{
         persona: draftPersona.value || 'dry_midwit_savant',
         platform: draftPlatform.value || 'reddit',
         count: Number(draftCount.value || 5),
-        force_engage: false,
+        force_engage: Boolean(draftForceEngage?.checked),
       }}),
     }});
     const payload = await response.json();
@@ -2387,7 +2406,7 @@ async function saveCandidateResponse(text, persona, platform) {{
         persona: draftPersona.value || 'dry_midwit_savant',
         platform: draftPlatform.value || 'reddit',
         count: Number(draftCount.value || 5),
-        force_engage: false,
+        force_engage: Boolean(draftForceEngage?.checked),
       }}),
     }});
     const payload = await response.json();
@@ -2422,7 +2441,7 @@ async function generateFromCombined(runId, combinedText, persona, platform) {{
         persona: String(persona || draftPersona.value || 'dry_midwit_savant'),
         platform: String(platform || draftPlatform.value || 'reddit'),
         count: 3,
-        force_engage: false,
+        force_engage: Boolean(draftForceEngage?.checked),
       }}),
     }});
     const payload = await response.json();
@@ -3293,17 +3312,44 @@ def _create_panel_http_server(
                 except (KeyError, TypeError, ValueError) as exc:
                     self._write_json(400, {"error": str(exc)})
                     return
+                run_snapshot = None
+                try:
+                    run_snapshot = RunRepository(db_path).get_run(int(created["run_id"]))
+                except (KeyError, TypeError, ValueError):
+                    run_snapshot = None
                 top_response = None
-                created_candidates = created.get("candidates") if isinstance(created, dict) else None
+                created_candidates = (
+                    run_snapshot.get("candidates")
+                    if isinstance(run_snapshot, dict)
+                    else (created.get("candidates") if isinstance(created, dict) else None)
+                )
                 if isinstance(created_candidates, list) and created_candidates:
                     top_response = str((created_candidates[0] or {}).get("text") or "") or None
+                selected_objective = None
+                if isinstance(run_snapshot, dict):
+                    selected_objective = run_snapshot.get("selected_objective")
+                if selected_objective is None:
+                    created_plan = created.get("plan") if isinstance(created, dict) else None
+                    if isinstance(created_plan, dict):
+                        selected_objective = created_plan.get("selected_objective")
                 self._write_json(
                     200,
                     {
                         "ok": True,
                         "run_id": created["run_id"],
-                        "persona": created.get("plan", {}).get("persona") if isinstance(created.get("plan"), dict) else None,
-                        "platform": payload.get("platform") or "reddit",
+                        "persona": (
+                            run_snapshot.get("persona")
+                            if isinstance(run_snapshot, dict)
+                            else (created.get("plan", {}).get("persona") if isinstance(created.get("plan"), dict) else None)
+                        ),
+                        "platform": (
+                            run_snapshot.get("platform")
+                            if isinstance(run_snapshot, dict)
+                            else (payload.get("platform") or "reddit")
+                        ),
+                        "selected_objective": selected_objective,
+                        "candidate_count": len(created_candidates or []),
+                        "force_engage": bool(payload.get("force_engage", False)),
                         "top_response": top_response,
                     },
                 )
