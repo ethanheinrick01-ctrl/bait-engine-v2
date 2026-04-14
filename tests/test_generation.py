@@ -221,6 +221,22 @@ class GenerationTests(unittest.TestCase):
         self.assertIn("compatibility", joined)
         self.assertNotIn("downvotes", joined)
 
+    def test_disagreement_fallbacks_are_tactic_aware_for_essay_collapse(self) -> None:
+        text = "Main compatibility for claude code and opencode is already working."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant").model_copy(
+            update={
+                "selected_objective": TacticalObjective.RESURRECT,
+                "selected_tactic": TacticFamily.ESSAY_COLLAPSE,
+            }
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=3)
+        fallbacks = build_disagreement_fallbacks(request)
+        joined = " ".join(fallbacks).lower()
+
+        self.assertIn("quality", joined)
+        self.assertIn("integration", joined)
+
 
 if __name__ == "__main__":
     unittest.main()

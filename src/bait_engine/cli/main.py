@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 def _build_provider(
     model: str | None = None,
     base_url: str | None = None,
-    timeout_seconds: int = 30,
+    timeout_seconds: int | None = None,
 ) -> TextGenerationProvider:
     effective_model = model or os.environ.get("BAIT_ENGINE_CHEAP_MODEL") or os.environ.get("BAIT_ENGINE_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-5.4-mini"
     return OpenAICompatibleProvider(
@@ -296,7 +296,7 @@ def cmd_draft(
     heuristic_only: bool = False,
     model: str | None = None,
     base_url: str | None = None,
-    timeout_seconds: int = 30,
+    timeout_seconds: int | None = None,
     force_engage: bool = False,
     mutation_source: str = "none",
 ) -> dict:
@@ -991,7 +991,7 @@ def cmd_replay(
     heuristic_only: bool = False,
     model: str | None = None,
     base_url: str | None = None,
-    timeout_seconds: int = 30,
+    timeout_seconds: int | None = None,
     mutation_source: str = "none",
     response_text: str | None = None,
 ) -> dict:
@@ -3311,6 +3311,11 @@ def _create_panel_http_server(
                         save=True,
                         db_path=db_path,
                         platform=str(payload.get("platform") or "reddit"),
+                        timeout_seconds=(
+                            int(payload["timeout_seconds"])
+                            if payload.get("timeout_seconds") is not None
+                            else None
+                        ),
                         force_engage=bool(payload.get("force_engage", False)),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
@@ -3671,7 +3676,7 @@ def main() -> None:
     draft_p.add_argument("--heuristic-only", action="store_true")
     draft_p.add_argument("--model", default=None)
     draft_p.add_argument("--base-url", default=None)
-    draft_p.add_argument("--timeout-seconds", type=int, default=30)
+    draft_p.add_argument("--timeout-seconds", type=int, default=None)
     draft_p.add_argument("--mutation-source", choices=["auto", "none"], default="none")
 
     runs_p = sub.add_parser("runs")
@@ -3688,7 +3693,7 @@ def main() -> None:
     replay_p.add_argument("--heuristic-only", action="store_true")
     replay_p.add_argument("--model", default=None)
     replay_p.add_argument("--base-url", default=None)
-    replay_p.add_argument("--timeout-seconds", type=int, default=30)
+    replay_p.add_argument("--timeout-seconds", type=int, default=None)
     replay_p.add_argument("--mutation-source", choices=["auto", "none"], default="none")
 
     autopsy_p = sub.add_parser("autopsy")

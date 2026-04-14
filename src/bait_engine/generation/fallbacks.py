@@ -61,8 +61,22 @@ def _source_anchor(source_text: str) -> str:
 
 def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:
     objective = request.plan.selected_objective.value
+    tactic = request.plan.selected_tactic.value if request.plan.selected_tactic is not None else ""
     anchor = _source_anchor(request.source_text)
+    anchor_label = f"'{anchor}'" if anchor != "that claim" else "that claim"
     if objective in _QUESTION_OBJECTIVES:
+        if tactic == "essay_collapse":
+            if anchor == "that claim":
+                return [
+                    "where is the evidence beyond the promise?",
+                    "what test makes that conclusion hold up?",
+                    "how does that claim survive one hard check?",
+                ]
+            return [
+                f"how does {anchor_label} prove quality instead of just integration?",
+                f"where is the evidence beyond {anchor_label}?",
+                f"what test shows {anchor_label} means the claim is true?",
+            ]
         if anchor == "that claim":
             return [
                 "where is the missing step between premise and conclusion?",
@@ -70,9 +84,9 @@ def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:
                 "how does that line establish the actual claim?",
             ]
         return [
-            f"where does '{anchor}' actually prove the conclusion?",
-            f"what step turns '{anchor}' into a real argument?",
-            f"how is '{anchor}' supposed to establish the claim?",
+            f"where does {anchor_label} actually prove the conclusion?",
+            f"what step turns {anchor_label} into a real argument?",
+            f"how is {anchor_label} supposed to establish the claim?",
         ]
     if anchor == "that claim":
         return [
@@ -81,7 +95,7 @@ def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:
             "useful isn't the same as true, that's the gap",
         ]
     return [
-        f"'{anchor}' still doesn't prove the point",
-        f"you're treating '{anchor}' like proof when it isn't",
-        f"'{anchor}' is framing, not evidence",
+        f"{anchor_label} still doesn't prove the point",
+        f"you're treating {anchor_label} like proof when it isn't",
+        f"{anchor_label} is framing, not evidence",
     ]

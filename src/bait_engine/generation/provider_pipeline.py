@@ -15,6 +15,17 @@ from bait_engine.providers.openai_compatible import OpenAICompatibleProvider
 logger = logging.getLogger(__name__)
 
 
+def _provider_is_local_ollama(provider: TextGenerationProvider) -> bool:
+    base_url = str(getattr(provider, "base_url", "") or "").lower()
+    return "127.0.0.1:11434" in base_url or "localhost:11434" in base_url
+
+
+def _is_timeout_error(exc: Exception) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    return "timed out" in str(exc).lower()
+
+
 def _provider_context(request: DraftRequest, provider: TextGenerationProvider) -> dict[str, str | int | None]:
     return {
         "provider": provider.__class__.__name__,
@@ -138,18 +149,19 @@ def draft_candidates_with_provider(
 
     raw_candidates = []
     if provider.is_available():
-        for attempt in range(2):
+        max_attempts = 1 if _provider_is_local_ollama(provider) else 2
+        for attempt in range(max_attempts):
             try:
                 raw_candidates = generate_candidates_via_provider(request, provider)
                 if attempt == 0 or raw_candidates:
                     break
             except RuntimeError as exc:
-                if attempt == 0:
+                if attempt < max_attempts - 1 and not _is_timeout_error(exc):
                     continue
                 _log_provider_failure(request, provider, exc, unexpected=False)
                 raw_candidates = []
             except Exception as exc:
-                if attempt == 0:
+                if attempt < max_attempts - 1 and not _is_timeout_error(exc):
                     continue
                 _log_provider_failure(request, provider, exc, unexpected=True)
                 raw_candidates = []

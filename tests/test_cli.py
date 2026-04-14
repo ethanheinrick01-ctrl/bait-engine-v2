@@ -230,7 +230,7 @@ class CliTests(unittest.TestCase):
             with mock.patch("bait_engine.cli.main._build_provider") as build_provider:
                 build_provider.return_value.is_available.return_value = False
                 replayed = cmd_replay(saved["run_id"], candidate_count=2, db_path=str(db_path))
-        build_provider.assert_called_once_with(model=saved["plan"]["selected_model"], base_url=None, timeout_seconds=30)
+        build_provider.assert_called_once_with(model=saved["plan"]["selected_model"], base_url=None, timeout_seconds=None)
         self.assertEqual(replayed["selected_model"], saved["plan"]["selected_model"])
         self.assertEqual(replayed["generation_state"]["provider_fallback_state"], "provider_unavailable")
 
@@ -245,7 +245,7 @@ class CliTests(unittest.TestCase):
                     candidate_count=3,
                     heuristic_only=False,
                 )
-        provider_cls.assert_called_once_with(model="recovery-model", base_url=None, timeout_seconds=30)
+        provider_cls.assert_called_once_with(model="recovery-model", base_url=None, timeout_seconds=None)
         self.assertEqual(result["generation_state"]["provider_model"], "recovery-model")
 
     def test_cmd_mutate_run_and_mutation_report(self) -> None:
