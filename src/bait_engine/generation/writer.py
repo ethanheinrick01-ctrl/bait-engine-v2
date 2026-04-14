@@ -519,7 +519,8 @@ _LOW_SIGNAL_SUBJECT_TOKENS = {
 }
 _NARRATIVE_LEAD_TOKENS = {
     "then", "got", "go", "went", "asked", "asking", "protested", "wearing",
-    "watching", "drove", "drive", "mention", "mentioned",
+    "watching", "drove", "drive", "mention", "mentioned", "think",
+    "can't", "cant", "cannot", "handle", "even",
 }
 
 

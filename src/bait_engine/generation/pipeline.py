@@ -39,6 +39,39 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
     return fallback
 
 
+def _augment_candidate_count(candidates: list[CandidateReply], request: DraftRequest) -> list[CandidateReply]:
+    objective = request.plan.selected_objective.value
+    if objective == "do_not_engage":
+        return candidates
+
+    target = max(1, request.candidate_count)
+    if len(candidates) >= target:
+        return candidates
+
+    selected = list(candidates)
+    seen = {candidate.text.strip().lower() for candidate in selected if candidate.text.strip()}
+    for text in build_disagreement_sequence(request, target):
+        if len(selected) >= target:
+            break
+        normalized = text.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        selected.append(
+            CandidateReply(
+                text=text,
+                tactic=request.plan.selected_tactic,
+                objective=request.plan.selected_objective.value,
+                persona=request.persona.name,
+                grounding_score=0.22,
+                generation_source="disagreement_fallback",
+                estimated_bite_score=0.58,
+                estimated_audience_score=0.54,
+            )
+        )
+    return selected
+
+
 def _filter_valid_candidates(candidates: list[CandidateReply], request: DraftRequest) -> list[CandidateReply]:
     objective = request.plan.selected_objective.value
     if objective == "do_not_engage":
@@ -119,6 +152,7 @@ def draft_candidates(request: DraftRequest) -> DraftResult:
     validated = _filter_valid_candidates(critiqued, request)
     with_floor = _backfill_candidate_floor(validated, critiqued, request)
     guarded = _enforce_disagreement(with_floor, request)
-    ranked = rank_candidates(guarded)
+    complete = _augment_candidate_count(guarded, request)
+    ranked = rank_candidates(complete)
     logger.debug("draft_candidates: produced %d candidates", len(ranked))
     return DraftResult(request=request, candidates=ranked)

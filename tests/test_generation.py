@@ -325,6 +325,26 @@ class GenerationTests(unittest.TestCase):
         self.assertFalse(any("someone literally killing is still" in line for line in lowered))
         self.assertFalse(any("not mention last time asked people is still" in line for line in lowered))
 
+    def test_draft_candidates_tops_up_sparse_engaged_pool(self) -> None:
+        text = (
+            "Not to mention last time we asked people to do something only mildly uncomfortable for the sake of their neighbors, "
+            "they got into screaming matches with the poor cashiers at trader Joe's and then protested like someone was literally killing their children. "
+            "We can't even handle wearing a mask to the grocery store. You think this country will really do a national labor strike?"
+        )
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="absurdist_accelerator").model_copy(
+            update={
+                "selected_objective": TacticalObjective.RESURRECT,
+                "selected_tactic": TacticFamily.ESSAY_COLLAPSE,
+            }
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("absurdist_accelerator"), candidate_count=4)
+        result = draft_candidates(request)
+
+        self.assertEqual(len(result.candidates), 4)
+        lowered = [item.text.lower() for item in result.candidates]
+        self.assertFalse(any("even handle wearing mask grocery store is still" in line for line in lowered))
+
 
 if __name__ == "__main__":
     unittest.main()

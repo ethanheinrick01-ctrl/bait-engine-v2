@@ -229,6 +229,18 @@ class ProviderGenerationTests(unittest.TestCase):
         normalized = {" ".join(item.text.lower().split()) for item in result.candidates}
         self.assertEqual(len(normalized), 4)
 
+    def test_provider_pipeline_tops_up_sparse_engaged_pool_to_requested_count(self) -> None:
+        text = "You think this country will really do a national labor strike?"
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="fake_sincere_questioner").model_copy(
+            update={"selected_objective": TacticalObjective.RESURRECT}
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("fake_sincere_questioner"), candidate_count=4)
+        provider = FakeProvider("1. where does that actually prove the conclusion?")
+        result = draft_candidates_with_provider(request, provider=provider)
+
+        self.assertEqual(len(result.candidates), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
