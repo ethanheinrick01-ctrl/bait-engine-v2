@@ -303,6 +303,28 @@ class GenerationTests(unittest.TestCase):
             )
         )
 
+    def test_absurdist_narrative_input_avoids_broken_subject_and_truncated_pressure_tail(self) -> None:
+        text = (
+            "Not to mention last time we asked people to do something only mildly uncomfortable for the sake of their neighbors, "
+            "they got into screaming matches with the poor cashiers at trader Joe's and then protested like someone was literally killing their children. "
+            "We can't even handle wearing a mask to the grocery store."
+        )
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="absurdist_accelerator").model_copy(
+            update={
+                "selected_objective": TacticalObjective.RESURRECT,
+                "selected_tactic": TacticFamily.ESSAY_COLLAPSE,
+            }
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("absurdist_accelerator"), candidate_count=3)
+        seeded = generate_candidates(request)
+
+        self.assertGreaterEqual(len(seeded), 1)
+        lowered = [item.text.lower() for item in seeded]
+        self.assertFalse(any(line.endswith("and somehow this") for line in lowered))
+        self.assertFalse(any("someone literally killing is still" in line for line in lowered))
+        self.assertFalse(any("not mention last time asked people is still" in line for line in lowered))
+
 
 if __name__ == "__main__":
     unittest.main()

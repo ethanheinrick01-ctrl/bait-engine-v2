@@ -517,6 +517,10 @@ _LOW_SIGNAL_SUBJECT_TOKENS = {
     "prom", "promise", "working", "hard", "patient", "ready", "soon",
     "im", "i'm", "ive", "i've", "youll", "you'll", "its", "it's",
 }
+_NARRATIVE_LEAD_TOKENS = {
+    "then", "got", "go", "went", "asked", "asking", "protested", "wearing",
+    "watching", "drove", "drive", "mention", "mentioned",
+}
 
 
 def reset_style_memory() -> None:
@@ -610,7 +614,7 @@ def _inject_anchor_hint(text: str, anchors: list[str], idx: int) -> str:
     return f"{prefix}, {text}"
 
 
-def _apply_pressure_profile(text: str, profile: str, idx: int) -> str:
+def _apply_pressure_profile(text: str, profile: str, idx: int, *, max_words: int | None = None) -> str:
     # Use a hash of (idx, len(text)) to break fingerprint patterns from simple modulo.
     _h = int(hashlib.blake2b(f"{idx}:{len(text)}".encode(), digest_size=4).hexdigest(), 16)
     if profile == "surgical_pinch":
@@ -622,7 +626,10 @@ def _apply_pressure_profile(text: str, profile: str, idx: int) -> str:
     if profile == "velvet_snare":
         return f"quick question, {text}" if _h % 2 == 0 else text
     if profile == "chaos_ramp":
-        return f"{text} and somehow this gets weirder"
+        tail = "and somehow this gets weirder"
+        if max_words is not None and len(text.split()) + len(tail.split()) > max_words:
+            return text
+        return f"{text} {tail}"
     return text
 
 
@@ -917,6 +924,14 @@ def _is_low_signal_subject(subject: str) -> bool:
         return True
     if tokens[0] in {"i", "i'm", "im", "you", "you'll", "youre", "it's", "its"} and len(tokens) <= 6:
         return True
+    if len(tokens) >= 2 and tokens[0] == "not" and tokens[1] == "mention":
+        return True
+    if len(tokens) >= 4 and tokens[0] in _NARRATIVE_LEAD_TOKENS:
+        return True
+    if any(token in {"someone", "somebody", "everyone", "everybody", "anyone", "anybody"} for token in tokens):
+        return True
+    if "like" in tokens and any(token.endswith("ing") for token in tokens):
+        return True
     low_signal_hits = sum(1 for token in tokens if token in _LOW_SIGNAL_SUBJECT_TOKENS)
     if low_signal_hits >= 2:
         return True
@@ -1197,7 +1212,7 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
             return
         recent_frames.add(frame_key)
         text = _render_source_frame(frame, request, idx, seed, mutation_hints)
-        text = _apply_pressure_profile(text, request.persona.pressure_profile, idx)
+        text = _apply_pressure_profile(text, request.persona.pressure_profile, idx, max_words=max_words)
         text = _inject_anchor_hint(text, request.winner_anchors, idx)
         text = _strip_avoid_patterns(text, request.avoid_patterns)
         text = _strip_bot_punctuation(text)
