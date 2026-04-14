@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from bait_engine.analysis import AnalyzeInput, analyze_comment
+from bait_engine.core.types import TacticalObjective
 from bait_engine.generation import DraftRequest, MutationSeed, draft_candidates_with_provider
 from bait_engine.generation.llm_writer import build_provider_prompts, generate_candidates_via_provider, parse_candidate_lines
 from bait_engine.planning import build_plan, get_persona
@@ -195,6 +196,18 @@ class ProviderGenerationTests(unittest.TestCase):
         )
         draft_candidates_with_provider(request, provider=provider)
         self.assertEqual(provider.calls, 2)
+
+    def test_provider_pipeline_do_not_engage_still_emits_candidates(self) -> None:
+        text = "lol nah"
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant").model_copy(
+            update={"selected_objective": TacticalObjective.DO_NOT_ENGAGE}
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=3)
+        provider = FakeProvider("", available=False)
+        result = draft_candidates_with_provider(request, provider=provider)
+
+        self.assertGreaterEqual(len(result.candidates), 1)
 
 
 if __name__ == "__main__":

@@ -184,13 +184,14 @@ class GenerationTests(unittest.TestCase):
         ranked = rank_candidates([generic, grounded])
         self.assertEqual(ranked[0].text, grounded.text)
 
-    def test_do_not_engage_yields_no_candidates(self) -> None:
+    def test_do_not_engage_still_emits_candidates(self) -> None:
         text = "lol nah"
         analysis = analyze_comment(AnalyzeInput(text=text))
         plan = build_plan(analysis)
         request = DraftRequest(source_text=text, plan=plan, persona=get_persona(), candidate_count=3)
         result = draft_candidates(request)
-        self.assertEqual(result.candidates, [])
+        self.assertEqual(request.plan.selected_objective.value, "do_not_engage")
+        self.assertGreaterEqual(len(result.candidates), 1)
 
     def test_disagreement_fallbacks_include_source_anchor_when_available(self) -> None:
         text = "Main compatibility for Claude code and Opencode is already working."

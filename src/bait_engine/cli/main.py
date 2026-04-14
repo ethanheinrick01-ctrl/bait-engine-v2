@@ -3330,7 +3330,11 @@ def _create_panel_http_server(
                 created_candidates = (
                     run_snapshot.get("candidates")
                     if isinstance(run_snapshot, dict)
-                    else (created.get("candidates") if isinstance(created, dict) else None)
+                    else (
+                        ((created.get("draft") or {}).get("candidates"))
+                        if isinstance(created, dict)
+                        else None
+                    )
                 )
                 if isinstance(created_candidates, list) and created_candidates:
                     top_response = str((created_candidates[0] or {}).get("text") or "") or None

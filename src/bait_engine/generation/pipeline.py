@@ -42,7 +42,7 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
 def _filter_valid_candidates(candidates: list[CandidateReply], request: DraftRequest) -> list[CandidateReply]:
     objective = request.plan.selected_objective.value
     if objective == "do_not_engage":
-        return []
+        return list(candidates)
 
     valid: list[CandidateReply] = []
     for candidate in candidates:

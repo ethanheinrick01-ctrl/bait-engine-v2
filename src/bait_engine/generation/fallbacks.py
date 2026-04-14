@@ -106,6 +106,8 @@ def _source_anchor(source_text: str) -> str:
             right_idx = left_idx + right_offset
             right = matches[right_idx]
             right_token = right[1]
+            if left_token == right_token:
+                continue
             span_words = right[0] - matches[left_idx][0] + 1
             if span_words > 6:
                 continue
@@ -129,7 +131,19 @@ def _source_anchor(source_text: str) -> str:
     else:
         anchor = best_single[2]
 
-    anchor = " ".join(anchor.split()).strip(" ,.-")
+    anchor_words = [piece for piece in anchor.split() if piece]
+    if len(anchor_words) > 4:
+        filtered = [piece for piece in anchor_words if piece.lower() not in {"and", "or", "the", "a", "an"}]
+        if len(filtered) >= 2:
+            anchor_words = filtered
+    if len(anchor_words) > 4:
+        anchor_words = anchor_words[:4]
+    deduped: list[str] = []
+    for piece in anchor_words:
+        if piece.lower() in {item.lower() for item in deduped}:
+            continue
+        deduped.append(piece)
+    anchor = " ".join(deduped or anchor_words).strip(" ,.-")
     return anchor or "that claim"
 
 

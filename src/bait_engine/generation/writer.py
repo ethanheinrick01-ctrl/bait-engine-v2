@@ -1151,8 +1151,6 @@ def _render_source_frame(frame: str, request: DraftRequest, idx: int, seed: int,
 
 def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
     plan = request.plan
-    if not plan.selected_tactic:
-        return []
 
     mutation_hints = _mutation_templates(request)
     seed = _stable_seed(request)

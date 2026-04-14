@@ -747,6 +747,88 @@ class CliTests(unittest.TestCase):
                 thread.join(timeout=2)
                 server.server_close()
 
+    def test_panel_http_server_draft_uses_created_draft_candidates_when_run_reload_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "bait.db"
+            server = _create_panel_http_server(
+                None,
+                db_path=str(db_path),
+                thread_id="t-123",
+                reply_to_id="c-456",
+                author_handle="necroposter",
+                context_json='{"platform":"reddit","thread_id":"t-123","messages":[{"message_id":"m1","body":"opening"}]}',
+                host="127.0.0.1",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://{server.server_address[0]}:{server.server_address[1]}"
+                with mock.patch("bait_engine.cli.main.cmd_draft") as draft_mock, mock.patch("bait_engine.cli.main.RunRepository.get_run", side_effect=KeyError("missing run")):
+                    draft_mock.return_value = {
+                        "run_id": 321,
+                        "plan": {"selected_objective": "resurrect"},
+                        "draft": {"candidates": [{"text": "fallback winner"}]},
+                    }
+                    request = Request(
+                        f"{base_url}/api/draft",
+                        data=json.dumps({
+                            "text": "A model being useful doesn't make it true, and you're still confusing mechanism with necessity.",
+                            "persona": "dry_midwit_savant",
+                            "platform": "reddit",
+                            "count": 4,
+                        }).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    response = json.loads(urlopen(request).read().decode("utf-8"))
+                self.assertTrue(response["ok"])
+                self.assertEqual(response["run_id"], 321)
+                self.assertEqual(response["candidate_count"], 1)
+                self.assertEqual(response["top_response"], "fallback winner")
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+    def test_panel_http_server_draft_endpoint_returns_nonempty_candidates_for_do_not_engage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "bait.db"
+            server = _create_panel_http_server(
+                None,
+                db_path=str(db_path),
+                thread_id="t-123",
+                reply_to_id="c-456",
+                author_handle="necroposter",
+                context_json='{"platform":"reddit","thread_id":"t-123","messages":[{"message_id":"m1","body":"opening"}]}',
+                host="127.0.0.1",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://{server.server_address[0]}:{server.server_address[1]}"
+                request = Request(
+                    f"{base_url}/api/draft",
+                    data=json.dumps({
+                        "text": "lol nah",
+                        "persona": "dry_midwit_savant",
+                        "platform": "reddit",
+                        "count": 3,
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                response = json.loads(urlopen(request).read().decode("utf-8"))
+                self.assertTrue(response["ok"])
+                self.assertEqual(response["selected_objective"], "do_not_engage")
+                self.assertGreaterEqual(response["candidate_count"], 1)
+                self.assertIsNotNone(response["top_response"])
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
     def test_panel_http_server_can_stage_emit_to_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "bait.db"
