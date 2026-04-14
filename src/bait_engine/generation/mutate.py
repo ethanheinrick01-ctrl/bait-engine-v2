@@ -121,6 +121,18 @@ def _fits_objective_shape(text: str, objective: str | None) -> bool:
     return True
 
 
+def _coerce_objective_shape(text: str, objective: str | None) -> str:
+    objective_key = (objective or "").strip().lower()
+    cleaned = text.strip()
+    if not cleaned or not objective_key or objective_key == "do_not_engage":
+        return cleaned
+    if objective_key in OBJECTIVE_MIN_QUESTION and "?" not in cleaned:
+        return f"{cleaned.rstrip('.!')}?"
+    if objective_key in OBJECTIVE_NO_QUESTION and "?" in cleaned:
+        return cleaned.replace("?", "").rstrip()
+    return cleaned
+
+
 def _delta_bounds_for_objective(objective: str | None) -> tuple[float, float]:
     key = (objective or "").strip().lower()
     return OBJECTIVE_DELTA_BOUNDS.get(key, (0.1, 0.55))
@@ -178,7 +190,7 @@ def generate_controlled_variants(
     variants: list[dict[str, Any]] = []
     seen = {_normalize(base_text).lower()}
     for transform_name, transform in transforms:
-        candidate_text = _normalize(transform(base_text))
+        candidate_text = _normalize(_coerce_objective_shape(transform(base_text), objective))
         if not candidate_text:
             continue
         key = candidate_text.lower()

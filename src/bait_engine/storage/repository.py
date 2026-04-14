@@ -419,7 +419,7 @@ class RunRepository:
 
     def _base_escalation_policy(self) -> dict[str, Any]:
         cheap_model = os.environ.get("BAIT_ENGINE_CHEAP_MODEL") or os.environ.get("BAIT_ENGINE_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-5.4-mini"
-        hard_model = os.environ.get("BAIT_ENGINE_HARD_MODEL") or "gpt-5.4"
+        hard_model = os.environ.get("BAIT_ENGINE_HARD_MODEL") or cheap_model
         return {
             "cheap_model": cheap_model,
             "hard_model": hard_model,
@@ -429,6 +429,30 @@ class RunRepository:
             "high_value_opportunity_threshold": float(os.environ.get("BAIT_ENGINE_ESCALATE_OPPORTUNITY_GTE", "0.72")),
             "per_run_escalation_cap": max(0, int(os.environ.get("BAIT_ENGINE_ESCALATE_PER_RUN_CAP", "1"))),
             "daily_escalation_cap": max(0, int(os.environ.get("BAIT_ENGINE_ESCALATE_DAILY_CAP", "24"))),
+        }
+
+    @staticmethod
+    def _generation_state_payload(
+        *,
+        provider_requested: bool,
+        provider_available: bool,
+        provider_model: str | None,
+        selected_model: str | None,
+        selected_model_tier: str | None,
+    ) -> dict[str, Any]:
+        if not provider_requested:
+            provider_fallback_state = "heuristic_only"
+        elif provider_available:
+            provider_fallback_state = "none"
+        else:
+            provider_fallback_state = "provider_unavailable"
+        return {
+            "provider_requested": provider_requested,
+            "provider_available": provider_available,
+            "provider_fallback_state": provider_fallback_state,
+            "provider_model": provider_model,
+            "selected_model": selected_model,
+            "selected_model_tier": selected_model_tier,
         }
 
     @staticmethod
@@ -1817,7 +1841,7 @@ class RunRepository:
         provider: TextGenerationProvider | None = None,
         heuristic_only: bool = False,
         force_engage: bool = False,
-        mutation_source: str = "auto",
+        mutation_source: str = "none",
     ) -> dict[str, Any]:
         logger.info("create_run_from_text: persona=%s platform=%s heuristic_only=%s", persona_name, platform, heuristic_only)
         bootstrap_analysis = analyze_comment(AnalyzeInput(text=text, platform=platform))
@@ -1935,11 +1959,11 @@ class RunRepository:
         )
 
         selected_model = str(escalation_decision.get("selected_model") or "")
+        active_provider = provider
         draft = None
         if heuristic_only:
             draft = draft_candidates(request)
         else:
-            active_provider = provider
             if active_provider is None:
                 active_provider = OpenAICompatibleProvider(model=selected_model or None)
             original_model = getattr(active_provider, "model", None)
@@ -1951,6 +1975,9 @@ class RunRepository:
             finally:
                 if model_swapped and original_model is not None:
                     setattr(active_provider, "model", original_model)
+
+        provider_available = bool(active_provider.is_available()) if active_provider is not None else False
+        provider_model = selected_model or str(getattr(active_provider, "model", "") or "") or None
 
         requested_persona_name = str(persona_name or "").strip() or resolved_persona_name
         selection_mode = "auto" if requested_persona_name.lower() == "auto" else "forced"
@@ -1966,6 +1993,13 @@ class RunRepository:
         plan_payload["escalation_reasons"] = list(escalation_decision.get("escalation_reasons") or [])
         plan_payload["budget_state"] = dict(escalation_decision.get("budget_state") or {})
         plan_payload["escalation_metrics"] = dict(escalation_decision.get("metrics") or {})
+        plan_payload["generation_state"] = self._generation_state_payload(
+            provider_requested=not heuristic_only,
+            provider_available=provider_available,
+            provider_model=provider_model,
+            selected_model=selected_model or None,
+            selected_model_tier=str(escalation_decision.get("selected_model_tier") or "cheap"),
+        )
 
         with open_db(self.path) as conn:
             cur = conn.execute(
@@ -4225,7 +4259,7 @@ class RunRepository:
         self,
         run_id: int,
         candidate_count: int | None = None,
-        mutation_source: str = "auto",
+        mutation_source: str = "none",
     ) -> DraftRequest:
         run = self.get_run(run_id)
         plan = DecisionPlan.model_validate(run["plan"])

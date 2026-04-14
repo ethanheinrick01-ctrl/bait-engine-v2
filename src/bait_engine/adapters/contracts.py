@@ -32,6 +32,7 @@ class AdapterSelectionPreset(BaseModel):
         "lowest_penalty",
         "auto_best",
         "blend_top3",
+        "mega_bait",
     ] = "rank"
     tactic: str | None = None
     objective: str | None = None

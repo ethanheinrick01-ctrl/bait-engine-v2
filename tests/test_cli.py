@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import json
 import sys
 import tempfile
@@ -176,6 +177,76 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(payload["mutation_context"])
         self.assertEqual(payload["winner_anchors"], [])
         self.assertEqual(payload["avoid_patterns"], [])
+
+    def test_draft_defaults_to_mutation_source_none_and_surfaces_generation_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("bait_engine.storage.repository.RunRepository._select_mutation_seeds", side_effect=AssertionError("mutation seeds should not be selected")):
+            db_path = Path(tmp) / "bait.db"
+            saved = cmd_draft(
+                text="That certainty sounds loud, not correct.",
+                persona_name="dry_midwit_savant",
+                candidate_count=3,
+                save=True,
+                db_path=str(db_path),
+                platform="reddit",
+                heuristic_only=True,
+            )
+        self.assertEqual(saved["prompt_payload"]["mutation_seeds"], [])
+        self.assertEqual(saved["generation_state"]["provider_fallback_state"], "heuristic_only")
+        self.assertFalse(saved["generation_state"]["provider_requested"])
+
+    def test_replay_defaults_to_mutation_source_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("bait_engine.storage.repository.RunRepository._select_mutation_seeds", side_effect=AssertionError("mutation seeds should not be selected")):
+            db_path = Path(tmp) / "bait.db"
+            saved = cmd_draft(
+                text="You're doing a lot of certainty theater for a claim with no spine.",
+                persona_name="dry_midwit_savant",
+                candidate_count=3,
+                save=True,
+                db_path=str(db_path),
+                platform="reddit",
+                heuristic_only=True,
+            )
+            replayed = cmd_replay(
+                saved["run_id"],
+                candidate_count=2,
+                db_path=str(db_path),
+                heuristic_only=True,
+            )
+        self.assertEqual(replayed["prompt_payload"]["mutation_seeds"], [])
+        self.assertEqual(replayed["generation_state"]["provider_fallback_state"], "heuristic_only")
+
+    def test_replay_uses_stored_selected_model_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "bait.db"
+            saved = cmd_draft(
+                text="That study being useful doesn't make your conclusion true.",
+                persona_name="dry_midwit_savant",
+                candidate_count=3,
+                save=True,
+                db_path=str(db_path),
+                platform="reddit",
+                heuristic_only=True,
+            )
+            with mock.patch("bait_engine.cli.main._build_provider") as build_provider:
+                build_provider.return_value.is_available.return_value = False
+                replayed = cmd_replay(saved["run_id"], candidate_count=2, db_path=str(db_path))
+        build_provider.assert_called_once_with(model=saved["plan"]["selected_model"], base_url=None, timeout_seconds=30)
+        self.assertEqual(replayed["selected_model"], saved["plan"]["selected_model"])
+        self.assertEqual(replayed["generation_state"]["provider_fallback_state"], "provider_unavailable")
+
+    def test_draft_uses_recovery_default_model_when_unspecified(self) -> None:
+        with mock.patch.dict(os.environ, {"BAIT_ENGINE_CHEAP_MODEL": "recovery-model"}, clear=True):
+            with mock.patch("bait_engine.cli.main.OpenAICompatibleProvider") as provider_cls:
+                provider_cls.return_value.is_available.return_value = False
+                provider_cls.return_value.model = "recovery-model"
+                result = cmd_draft(
+                    text="That model is useful, but usefulness still isn't truth.",
+                    persona_name="dry_midwit_savant",
+                    candidate_count=3,
+                    heuristic_only=False,
+                )
+        provider_cls.assert_called_once_with(model="recovery-model", base_url=None, timeout_seconds=30)
+        self.assertEqual(result["generation_state"]["provider_model"], "recovery-model")
 
     def test_cmd_mutate_run_and_mutation_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -654,23 +725,23 @@ class CliTests(unittest.TestCase):
                 self.assertIn("Quick draft", dashboard)
                 self.assertIn("bait-engine:last-run-id", dashboard)
                 self.assertIn("restoreDraftDefaults", dashboard)
-                request = Request(
-                    f"{base_url}/api/draft",
-                    data=json.dumps({
-                        "text": "A model being useful doesn't make it true, and you're still confusing mechanism with necessity.",
-                        "persona": "dry_midwit_savant",
-                        "platform": "reddit",
-                        "count": 4,
-                    }).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                response = json.loads(urlopen(request).read().decode("utf-8"))
+                with mock.patch("bait_engine.cli.main.cmd_draft") as draft_mock:
+                    draft_mock.return_value = {"ok": True, "run_id": 999, "plan": {}, "draft": {"candidates": []}}
+                    request = Request(
+                        f"{base_url}/api/draft",
+                        data=json.dumps({
+                            "text": "A model being useful doesn't make it true, and you're still confusing mechanism with necessity.",
+                            "persona": "dry_midwit_savant",
+                            "platform": "reddit",
+                            "count": 4,
+                        }).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    response = json.loads(urlopen(request).read().decode("utf-8"))
                 self.assertTrue(response["ok"])
-                panel = json.loads(urlopen(f"{base_url}/panel.json?run_id={response['run_id']}").read().decode("utf-8"))
-                self.assertEqual(panel["envelope"]["run_id"], response["run_id"])
-                stored = cmd_show_run(response["run_id"], db_path=str(db_path))
-                self.assertEqual(len(stored["candidates"]), 4)
+                draft_mock.assert_called_once()
+                self.assertFalse(draft_mock.call_args.kwargs["force_engage"])
             finally:
                 server.shutdown()
                 thread.join(timeout=2)

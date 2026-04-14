@@ -11,6 +11,9 @@ class CandidateReply(BaseModel):
     tactic: TacticFamily | None = None
     objective: str
     persona: str
+    weave_role: str | None = None
+    grounding_score: float = Field(ge=0.0, le=1.0, default=0.0)
+    generation_source: str = "heuristic"
     estimated_bite_score: float = Field(ge=0.0, le=1.0, default=0.0)
     estimated_audience_score: float = Field(ge=0.0, le=1.0, default=0.0)
     critic_penalty: float = Field(ge=0.0, le=1.0, default=0.0)

@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from bait_engine.analysis import AnalyzeInput, analyze_comment
 from bait_engine.generation import DraftRequest, MutationSeed, draft_candidates_with_provider
-from bait_engine.generation.llm_writer import parse_candidate_lines
+from bait_engine.generation.llm_writer import build_provider_prompts, generate_candidates_via_provider, parse_candidate_lines
 from bait_engine.planning import build_plan, get_persona
 from bait_engine.providers.base import TextGenerationProvider
 
@@ -39,14 +39,19 @@ class ProviderGenerationTests(unittest.TestCase):
         parsed = parse_candidate_lines(raw, 3)
         self.assertEqual(parsed, ["first line", "second line", "third line"])
 
-    def test_provider_path_uses_model_output(self) -> None:
-        text = "What exactly do you mean by that and why should anyone buy it?"
+    def test_parse_candidate_lines_handles_json_array(self) -> None:
+        raw = "[\"first line\", \"second line\", \"third line\"]"
+        parsed = parse_candidate_lines(raw, 3)
+        self.assertEqual(parsed, ["first line", "second line", "third line"])
+
+    def test_build_provider_prompts_use_structured_newlines(self) -> None:
+        text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
         analysis = analyze_comment(AnalyzeInput(text=text))
-        plan = build_plan(analysis, persona="fake_sincere_questioner")
+        plan = build_plan(analysis, persona="dry_midwit_savant")
         request = DraftRequest(
             source_text=text,
             plan=plan,
-            persona=get_persona("fake_sincere_questioner"),
+            persona=get_persona("dry_midwit_savant"),
             candidate_count=3,
             mutation_seeds=[
                 MutationSeed(
@@ -54,20 +59,62 @@ class ProviderGenerationTests(unittest.TestCase):
                     transform="compress",
                     tactic=plan.selected_tactic.value if plan.selected_tactic else None,
                     objective=plan.selected_objective.value,
-                    winner_score=1.37,
                 )
             ],
         )
-        provider = FakeProvider("1. what answer would even satisfy you here\n2. define the standard first\n3. you're asking questions instead of making a case")
-        result = draft_candidates_with_provider(request, provider=provider)
-        self.assertGreaterEqual(len(result.candidates), 3)
-        self.assertEqual(result.candidates[0].persona, "fake_sincere_questioner")
-        self.assertIsNotNone(provider.last_user_prompt)
-        self.assertIn("Mutation seeds", provider.last_user_prompt or "")
-        self.assertIn("You announced a conclusion before proving a premise.", provider.last_user_prompt or "")
+        _, user_prompt = build_provider_prompts(request)
+        self.assertIn("Source text:\n", user_prompt)
+        self.assertIn("Persona:\n- name: dry_midwit_savant", user_prompt)
+        self.assertIn("Return format:\n- Return exactly 3 distinct candidates.", user_prompt)
+        self.assertIn("Weave guidance:\n- Make the first three candidates complementary enough to fuse into one reply.", user_prompt)
+        self.assertIn("Mutation seeds", user_prompt)
+        self.assertNotIn("\\n", user_prompt)
+        self.assertNotIn("{'name':", user_prompt)
 
-    def test_provider_failure_falls_back_cleanly(self) -> None:
-        text = "A model being useful doesn't make it true, and you're still confusing mechanism with necessity."
+    def test_provider_generation_assigns_weave_roles_to_first_three_candidates(self) -> None:
+        text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant")
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=3)
+        provider = FakeProvider(
+            "1. useful does not make it true, that's the lead gap\n"
+            "2. mechanism still isn't necessity, and that's the pressure point\n"
+            "3. useful does not make it true, that's the sting you're hiding"
+        )
+        candidates = generate_candidates_via_provider(request, provider)
+        self.assertEqual([item.weave_role for item in candidates[:3]], ["lead", "support", "sting"])
+
+    def test_provider_path_uses_model_output_and_marks_source(self) -> None:
+        text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant")
+        request = DraftRequest(
+            source_text=text,
+            plan=plan,
+            persona=get_persona("dry_midwit_savant"),
+            candidate_count=3,
+            mutation_seeds=[
+                MutationSeed(
+                    text="You announced a conclusion before proving a premise.",
+                    transform="compress",
+                    tactic=plan.selected_tactic.value if plan.selected_tactic else None,
+                    objective=plan.selected_objective.value,
+                )
+            ],
+        )
+        provider = FakeProvider(
+            "1. useful does not make it true, so why are you treating mechanism like necessity?\n"
+            "2. if usefulness proved truth, mechanism versus necessity would stop mattering, right?\n"
+            "3. you keep swapping usefulness for truth and calling that a mechanism?"
+        )
+        result = draft_candidates_with_provider(request, provider=provider)
+
+        self.assertEqual([item.generation_source for item in result.candidates], ["provider", "provider", "provider"])
+        self.assertIn("Mutation seeds", provider.last_user_prompt or "")
+        self.assertTrue(any("mechanism" in item.text.lower() for item in result.candidates))
+
+    def test_provider_failure_falls_back_cleanly_and_marks_fallback(self) -> None:
+        text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
         analysis = analyze_comment(AnalyzeInput(text=text))
         plan = build_plan(analysis, persona="dry_midwit_savant")
         request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=3)
@@ -75,6 +122,7 @@ class ProviderGenerationTests(unittest.TestCase):
         with self.assertLogs("bait_engine.generation.provider_pipeline", level="WARNING") as captured:
             result = draft_candidates_with_provider(request, provider=provider)
         self.assertGreaterEqual(len(result.candidates), 1)
+        self.assertTrue(all(item.generation_source == "heuristic_fallback" for item in result.candidates))
         logged = "\n".join(captured.output)
         self.assertIn("Provider-backed drafting failed", logged)
         self.assertIn("provider=FakeProvider", logged)

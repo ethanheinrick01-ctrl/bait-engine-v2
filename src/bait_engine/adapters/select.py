@@ -3,7 +3,7 @@ from __future__ import annotations
 from math import log
 from typing import Any, Literal
 
-SelectionStrategy = Literal["rank", "top_score", "highest_bite", "highest_audience", "lowest_penalty", "auto_best", "blend_top3"]
+SelectionStrategy = Literal["rank", "top_score", "highest_bite", "highest_audience", "lowest_penalty", "auto_best", "blend_top3", "mega_bait"]
 DispatchDriver = Literal["manual_copy", "jsonl_append", "webhook_post", "reddit_api", "x_api", "auto"]
 
 
@@ -126,7 +126,7 @@ def select_candidate(
             raise KeyError(f"candidate rank_index={candidate_rank_index} not found")
         return candidate
 
-    if strategy == "top_score" or strategy == "blend_top3":
+    if strategy in {"top_score", "blend_top3", "mega_bait"}:
         return max(filtered, key=lambda item: (float(item.get("rank_score") or 0.0), -int(item.get("rank_index") or 999999)))
     if strategy == "highest_bite":
         return max(filtered, key=lambda item: (float(item.get("estimated_bite_score") or 0.0), float(item.get("rank_score") or 0.0)))

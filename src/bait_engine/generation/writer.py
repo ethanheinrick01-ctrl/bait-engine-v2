@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import hashlib
 import math
+import re
 from typing import TypedDict
 
 from bait_engine.core.types import TacticFamily
@@ -477,6 +478,22 @@ PERSONA_FLAVOR = {name: pack["suffixes"] for name, pack in PERSONA_STYLE_PACKS.i
 
 # Keep a tiny rolling memory to suppress immediate reuse across adjacent generations.
 _RECENT_STYLE_MEMORY: dict[str, dict[str, deque[str]]] = {}
+_SOURCE_WORD_RE = re.compile(r"[a-z0-9']+")
+_SOURCE_STOPWORDS = {
+    "about", "after", "again", "also", "arguing", "because", "before", "being",
+    "claim", "comment", "conclusion", "confusing", "does", "doing", "dont",
+    "enough", "exactly", "follow", "from", "here", "just", "like", "make",
+    "meant", "more", "only", "part", "really", "same", "should", "still",
+    "that", "their", "there", "these", "thing", "this", "those", "what",
+    "when", "where", "which", "while", "with", "would", "your", "youre",
+}
+_OBJECTIVE_REQUIRES_QUESTION = {"hook", "resurrect", "stall", "branch_split"}
+_OBJECTIVE_REJECTS_QUESTION = {"collapse", "audience_win", "exit_on_top"}
+_CONFUSION_RE = re.compile(r"\b(?:you(?:'re| are)\s+)?confusing\s+(?P<left>[^,.!?;]+?)\s+with\s+(?P<right>[^,.!?;]+)", re.IGNORECASE)
+_DOES_NOT_MAKE_RE = re.compile(r"\b(?P<left>[^,.!?;]+?)\s+(?:does not|doesn't)\s+make\s+(?P<right>[^,.!?;]+)", re.IGNORECASE)
+_IS_NOT_RE = re.compile(r"\b(?P<left>[^,.!?;]+?)\s+(?:is not|isn't|are not|aren't)\s+(?P<right>[^,.!?;]+)", re.IGNORECASE)
+_LEADING_FILLER_RE = re.compile(r"^(?:that|this|these|those|your|you're|you are)\s+", re.IGNORECASE)
+_HARD_OPENERS = {"translation", "diagnosis", "mechanically", "version that survives contact"}
 
 
 def reset_style_memory() -> None:
@@ -574,7 +591,7 @@ def _apply_pressure_profile(text: str, profile: str, idx: int) -> str:
     # Use a hash of (idx, len(text)) to break fingerprint patterns from simple modulo.
     _h = int(hashlib.blake2b(f"{idx}:{len(text)}".encode(), digest_size=4).hexdigest(), 16)
     if profile == "surgical_pinch":
-        return f"premise first, {text}" if _h % 3 == 0 else text
+        return text
     if profile == "taunt_escalator":
         return f"{text} keep pretending" if _h % 2 == 0 else f"{text} lol"
     if profile == "ice_pick":
@@ -721,18 +738,267 @@ def _stitch_clauses(
 
 
 def _mutation_templates(request: DraftRequest) -> list[str]:
-    seen: set[str] = set()
-    templates: list[str] = []
+    transforms: list[str] = []
     for seed in request.mutation_seeds:
-        text = str(seed.text or "").strip()
-        if not text:
+        transform = str(seed.transform or "").strip().lower()
+        if transform and transform not in transforms:
+            transforms.append(transform)
+    return transforms
+
+
+def _tokenize_source(text: str) -> list[str]:
+    return _SOURCE_WORD_RE.findall((text or "").lower())
+
+
+def _source_terms(text: str) -> list[str]:
+    tokens = [
+        token
+        for token in _tokenize_source(text)
+        if len(token) >= 4 and token not in _SOURCE_STOPWORDS
+    ]
+    return list(dict.fromkeys(tokens))
+
+
+def _source_fragments(text: str) -> list[str]:
+    fragments: list[str] = []
+    seen: set[str] = set()
+    for block in re.split(r"[.?!\n;]+", text):
+        block = " ".join(block.strip().split())
+        if not block:
             continue
-        key = text.lower()
-        if key in seen:
+        pieces = [block]
+        if len(block.split()) > 10:
+            pieces = [chunk.strip(" ,") for chunk in re.split(r",| but | and | because ", block) if chunk.strip(" ,")]
+        for piece in pieces:
+            normalized = " ".join(piece.split())
+            if len(normalized.split()) < 3:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            fragments.append(normalized)
+    return fragments[:6]
+
+
+def _short_fragment(fragment: str, limit: int = 7) -> str:
+    return " ".join(fragment.split()[:limit]).rstrip(",")
+
+
+def _clean_focus_part(value: str) -> str:
+    cleaned = " ".join((value or "").strip().split())
+    cleaned = cleaned.strip(" ,.-")
+    cleaned = _LEADING_FILLER_RE.sub("", cleaned)
+    return cleaned.strip(" ,.-")
+
+
+def _extract_focus_frame(fragment: str) -> dict[str, str]:
+    normalized = _clean_focus_part(fragment)
+    for pattern, kind in (
+        (_CONFUSION_RE, "confusion"),
+        (_DOES_NOT_MAKE_RE, "does_not_make"),
+        (_IS_NOT_RE, "is_not"),
+    ):
+        match = pattern.search(fragment)
+        if not match:
             continue
-        seen.add(key)
-        templates.append(text)
-    return templates
+        left = _clean_focus_part(match.group("left"))
+        right = _clean_focus_part(match.group("right"))
+        if left and right:
+            return {"kind": kind, "left": left, "right": right}
+    subject = _short_fragment(normalized, limit=7)
+    return {"kind": "generic", "subject": subject or "that claim"}
+
+
+def _focus_signature(focus: dict[str, str]) -> str:
+    kind = focus.get("kind") or "generic"
+    if kind == "generic":
+        return f"{kind}:{focus.get('subject', '')}"
+    return f"{kind}:{focus.get('left', '')}|{focus.get('right', '')}"
+
+
+def _frame_from_fragment(fragment: str, request: DraftRequest, idx: int, role: str = "lead") -> str:
+    tactic = request.plan.selected_tactic
+    objective = request.plan.selected_objective.value
+    focus = _extract_focus_frame(fragment)
+    kind = focus.get("kind")
+
+    if kind == "confusion":
+        left = focus["left"]
+        right = focus["right"]
+        if role == "support":
+            if tactic == TacticFamily.BURDEN_REVERSAL:
+                frame = f"you still need to show {left} becomes {right}"
+            elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
+                frame = f"treating {left} and {right} as interchangeable is doing all the work"
+            elif tactic == TacticFamily.FAKE_CLARIFICATION:
+                frame = f"you're still sliding from {left} to {right}"
+            elif tactic == TacticFamily.LABEL_AND_LEAVE:
+                frame = f"that's just relabeling {left} as {right}"
+            elif tactic == TacticFamily.REVERSE_INTERROGATION:
+                frame = f"what step turns {left} into {right}"
+            elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
+                frame = f"you need {left} to count as {right} or this dies"
+            else:
+                frame = f"{left} still isn't {right}, and that's load-bearing"
+        elif role == "sting":
+            if tactic == TacticFamily.LABEL_AND_LEAVE:
+                frame = f"{left} isn't {right}, that's label swapping"
+            elif tactic == TacticFamily.BURDEN_REVERSAL:
+                frame = f"{left} still doesn't become {right}, that's what you never proved"
+            elif tactic == TacticFamily.REVERSE_INTERROGATION:
+                frame = f"{left} isn't {right}, that's the missing step"
+            else:
+                frame = f"{left} isn't {right}, that's the trick you're hiding"
+        elif tactic == TacticFamily.BURDEN_REVERSAL:
+            frame = f"where do you show {left} becomes {right}"
+        elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
+            frame = f"if {left} equals {right}, then words mean nothing"
+        elif tactic == TacticFamily.CALM_REDUCTION:
+            frame = f"{left} still isn't {right}"
+        elif tactic == TacticFamily.FAKE_CLARIFICATION:
+            frame = f"so {left} is supposed to equal {right} now"
+        elif tactic == TacticFamily.ABSURDIST_DERAIL:
+            frame = f"making {left} and {right} identical is still cartoon logic"
+        elif tactic == TacticFamily.SCHOLAR_HEX:
+            frame = f"{left} isn't {right}, that's the gap"
+        elif tactic == TacticFamily.LABEL_AND_LEAVE:
+            frame = f"calling {left} {right} is just label swapping"
+        elif tactic == TacticFamily.REVERSE_INTERROGATION:
+            frame = f"what makes {left} equivalent to {right}"
+        elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
+            frame = f"you keep needing {left} to count as {right}"
+        else:
+            frame = f"{left} isn't {right}, that's still the miss"
+    elif kind in {"does_not_make", "is_not"}:
+        left = focus["left"]
+        right = focus["right"]
+        relation = "doesn't make" if kind == "does_not_make" else "isn't"
+        if role == "support":
+            if tactic == TacticFamily.BURDEN_REVERSAL:
+                frame = f"you still need to show how {left} gets you {right}"
+            elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
+                frame = f"if {left} gets you {right}, then anything does"
+            elif tactic == TacticFamily.FAKE_CLARIFICATION:
+                frame = f"you're still acting like {left} gets you {right}"
+            elif tactic == TacticFamily.LABEL_AND_LEAVE:
+                frame = f"treating {left} like {right} is still category slop"
+            elif tactic == TacticFamily.REVERSE_INTERROGATION:
+                frame = f"what makes {left} enough for {right}"
+            elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
+                frame = f"you still need {left} to get you {right}"
+            else:
+                frame = f"{left} still {relation} {right}, and that's the problem"
+        elif role == "sting":
+            if tactic == TacticFamily.LABEL_AND_LEAVE:
+                frame = f"{left} {relation} {right}, that's category slop"
+            elif tactic == TacticFamily.BURDEN_REVERSAL:
+                frame = f"{left} {relation} {right}, that's what you never proved"
+            elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
+                frame = f"{left} still doesn't get you {right}, that's load-bearing"
+            else:
+                frame = f"{left} {relation} {right}, that's the leap you're hiding"
+        elif tactic == TacticFamily.BURDEN_REVERSAL:
+            frame = f"where do you show {left} becomes {right}"
+        elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
+            frame = f"if {left} gets you {right}, then literally anything does"
+        elif tactic == TacticFamily.CALM_REDUCTION:
+            frame = f"{left} still {relation} {right}"
+        elif tactic == TacticFamily.FAKE_CLARIFICATION:
+            frame = f"so {left} is supposed to get you {right}"
+        elif tactic == TacticFamily.ABSURDIST_DERAIL:
+            frame = f"somehow {left} is doing backflips into {right} now"
+        elif tactic == TacticFamily.SCHOLAR_HEX:
+            if kind == "does_not_make":
+                frame = f"{left} doesn't make {right}, that's the whole gap"
+            else:
+                frame = f"{left} isn't {right}, that's the whole gap"
+        elif tactic == TacticFamily.LABEL_AND_LEAVE:
+            frame = f"treating {left} like {right} is category slop"
+        elif tactic == TacticFamily.REVERSE_INTERROGATION:
+            frame = f"what makes {left} enough for {right}"
+        elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
+            frame = f"you still need {left} to get you {right}"
+        else:
+            frame = f"{left} doesn't get you {right}"
+    else:
+        subject = focus.get("subject") or "that claim"
+        if role == "support":
+            if tactic == TacticFamily.BURDEN_REVERSAL:
+                frame = f"you still never proved {subject}"
+            elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
+                frame = f"you're still asking {subject} to carry way more than it can"
+            elif tactic == TacticFamily.FAKE_CLARIFICATION:
+                frame = f"you're still asking {subject} to do all the work here"
+            elif tactic == TacticFamily.REVERSE_INTERROGATION:
+                frame = f"what evidence is supposed to make {subject} true"
+            else:
+                frame = f"{subject} is still doing all the work for no reason"
+        elif role == "sting":
+            if tactic == TacticFamily.LABEL_AND_LEAVE:
+                frame = f"{subject} is still confidence cosplay"
+            elif tactic == TacticFamily.BURDEN_REVERSAL:
+                frame = f"{subject} is still the part you never proved"
+            else:
+                frame = f"{subject} is still the trick you're hiding"
+        elif tactic == TacticFamily.ESSAY_COLLAPSE:
+            frame = f"{subject} is still one bad premise"
+        elif tactic == TacticFamily.BURDEN_REVERSAL:
+            frame = f"where do you actually prove {subject}"
+        elif tactic == TacticFamily.AGREE_AND_ACCELERATE:
+            frame = f"if {subject} counts, then literally anything counts"
+        elif tactic == TacticFamily.CALM_REDUCTION:
+            frame = f"{subject} is still unsupported"
+        elif tactic == TacticFamily.FAKE_CLARIFICATION:
+            frame = f"so {subject} is supposed to do all the work here"
+        elif tactic == TacticFamily.ABSURDIST_DERAIL:
+            frame = f"{subject} is doing cartwheels and still proving nothing"
+        elif tactic == TacticFamily.SCHOLAR_HEX:
+            frame = f"{subject} is still underdetermined"
+        elif tactic == TacticFamily.LABEL_AND_LEAVE:
+            frame = f"{subject} is just confidence cosplay"
+        elif tactic == TacticFamily.REVERSE_INTERROGATION:
+            frame = f"what evidence is meant to make {subject} true"
+        elif tactic == TacticFamily.CONCESSION_MAGNIFIER:
+            frame = f"that caveat around {subject} is the whole problem"
+        else:
+            frame = f"{subject} is not doing the work you think"
+
+    if objective in _OBJECTIVE_REQUIRES_QUESTION and not frame.endswith("?"):
+        return f"{frame}?"
+    if objective in _OBJECTIVE_REJECTS_QUESTION:
+        return frame.rstrip("?")
+    return frame if idx % 2 == 0 else frame.rstrip("?")
+
+
+def _render_source_frame(frame: str, request: DraftRequest, idx: int, seed: int, mutation_hints: list[str]) -> str:
+    style_pack = PERSONA_STYLE_PACKS.get(request.persona.name, {"openers": [""], "suffixes": [""], "closers": [""]})
+    openers = _permuted(style_pack.get("openers", [""]), seed, 17)
+    closers = _permuted(style_pack.get("closers", [""]), seed, 43)
+    opener = openers[idx % len(openers)] if openers else ""
+    closer = closers[idx % len(closers)] if closers else ""
+    text = frame
+    _, max_words = request.persona.length_band_words
+
+    can_prefix = len(text.split()) <= max_words - 4 and opener and len(opener.split()) <= 1 and opener.lower() not in _HARD_OPENERS and idx % 2 == 0
+    if can_prefix:
+        text = f"{opener}, {text}"
+    if mutation_hints:
+        hint = mutation_hints[idx % len(mutation_hints)]
+        if hint == "compress":
+            text = text.replace("actually ", "").replace("literally ", "")
+        elif hint == "sharpen" and not text.endswith("prove it") and len(text.split()) <= max_words - 2:
+            text = f"{text.rstrip('?')}, prove it"
+        elif hint == "invert_confidence_posture" and len(text.split()) <= max_words - 4:
+            text = f"maybe i'm missing it, {text[0].lower() + text[1:]}" if text else text
+        elif hint == "soften_surface_preserve_sting" and not text.endswith("?") and len(text.split()) <= max_words - 3:
+            text = f"serious question, {text[0].lower() + text[1:]}?"
+        elif hint == "vary_cadence" and "," not in text:
+            text = text.replace(" is ", ", is ", 1)
+
+    if closer and idx % 3 == 1 and len(text.split()) + len(closer.split()) <= max_words:
+        text = f"{text} {closer}"
+    return text
 
 
 def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
@@ -740,46 +1006,50 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
     if not plan.selected_tactic:
         return []
 
-    mutation_pool = _mutation_templates(request)
-    base = TACTIC_TEMPLATES.get(plan.selected_tactic, ["that's not doing what you think it's doing"])
-    alternates = []
-    for tactic in plan.alternates:
-        alternates.extend(TACTIC_TEMPLATES.get(tactic, []))
-
-    pool = mutation_pool + base + alternates
-
-    style_pack = PERSONA_STYLE_PACKS.get(request.persona.name, {"openers": [""], "suffixes": [""], "closers": [""]})
+    mutation_hints = _mutation_templates(request)
     seed = _stable_seed(request)
-    openers = _permuted(style_pack.get("openers", [""]), seed, 17)
-    suffixes = _permuted(style_pack.get("suffixes", [""]), seed, 29)
-    closers = _permuted(style_pack.get("closers", [""]), seed, 43)
-
-    local_recent_openers: deque[str] = deque(maxlen=4)
-    local_recent_suffixes: deque[str] = deque(maxlen=6)
-    local_recent_closers: deque[str] = deque(maxlen=4)
-
-    global_recent_openers = _component_memory(request.persona.name, "openers")
-    global_recent_suffixes = _component_memory(request.persona.name, "suffixes")
-    global_recent_closers = _component_memory(request.persona.name, "closers")
+    fragments = _source_fragments(request.source_text)
+    if not fragments:
+        salient = _source_terms(request.source_text)
+        fragments = [" ".join(salient[:6])] if salient else ["that claim"]
 
     results: list[CandidateReply] = []
     min_words, max_words = request.persona.length_band_words
+    recent_frames: set[str] = set()
+    weave_roles = ("lead", "support", "sting")
 
-    for idx, template in enumerate(pool[: request.candidate_count]):
-        use_seed = idx < len(mutation_pool)
+    unique_fragments: list[str] = []
+    seen_focus: set[str] = set()
+    for fragment in fragments:
+        signature = _focus_signature(_extract_focus_frame(fragment))
+        if signature in seen_focus:
+            continue
+        seen_focus.add(signature)
+        unique_fragments.append(fragment)
+        if len(unique_fragments) >= 3:
+            break
+    if not unique_fragments:
+        unique_fragments = fragments[:1]
 
-        text = template
-        if not use_seed:
-            opener = _select_with_suppression(openers, idx, local_recent_openers, global_recent_openers)
-            suffix = _select_with_suppression(suffixes, idx, local_recent_suffixes, global_recent_suffixes)
-            closer = _select_with_suppression(closers, idx, local_recent_closers, global_recent_closers)
-            text = _stitch_clauses(
-                opener, template, suffix, closer,
-                target_register=request.target_register,
-                seed=seed,
-                idx=idx,
-            )
+    seeded_specs: list[tuple[str, str]] = []
+    primary_fragment = unique_fragments[0]
+    secondary_fragment = unique_fragments[1] if len(unique_fragments) > 1 else primary_fragment
+    seeded_specs.append((primary_fragment, "lead"))
+    if request.candidate_count >= 2:
+        seeded_specs.append((secondary_fragment, "support"))
+    if request.candidate_count >= 3:
+        seeded_specs.append((primary_fragment, "sting"))
 
+    def _append_candidate(fragment: str, role: str, idx: int) -> None:
+        nonlocal results
+        if len(results) >= request.candidate_count:
+            return
+        frame = _frame_from_fragment(fragment, request, idx, role=role)
+        frame_key = frame.lower()
+        if frame_key in recent_frames:
+            return
+        recent_frames.add(frame_key)
+        text = _render_source_frame(frame, request, idx, seed, mutation_hints)
         text = _apply_pressure_profile(text, request.persona.pressure_profile, idx)
         text = _inject_anchor_hint(text, request.winner_anchors, idx)
         text = _strip_avoid_patterns(text, request.avoid_patterns)
@@ -788,29 +1058,28 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
         text = _apply_contractions(text)
         text = _lowercase_i(text, request.target_register)
         text = _strip_trailing_period(text, request.persona.punctuation_style)
-
-        if use_seed:
-            tactic = plan.selected_tactic
-            estimated_bite = min(1.0, 0.58 + idx * 0.025)
-            estimated_audience = min(1.0, 0.54 + idx * 0.02)
-        else:
-            base_offset = idx - len(mutation_pool)
-            tactic = (
-                plan.selected_tactic
-                if base_offset < len(base)
-                else (plan.alternates[(base_offset - len(base)) % max(len(plan.alternates), 1)] if plan.alternates else plan.selected_tactic)
-            )
-            estimated_bite = min(1.0, 0.45 + base_offset * 0.03)
-            estimated_audience = min(1.0, 0.42 + base_offset * 0.025)
-
+        if len(text.split()) < min_words:
+            return
         results.append(
             CandidateReply(
                 text=text,
-                tactic=tactic,
+                tactic=plan.selected_tactic,
                 objective=plan.selected_objective.value,
                 persona=request.persona.name,
-                estimated_bite_score=estimated_bite,
-                estimated_audience_score=estimated_audience,
+                weave_role=role if len(results) < 3 else None,
+                generation_source="heuristic",
+                estimated_bite_score=min(1.0, 0.52 + len(results) * 0.04),
+                estimated_audience_score=min(1.0, 0.48 + len(results) * 0.03),
             )
         )
+
+    for idx, (fragment, role) in enumerate(seeded_specs):
+        _append_candidate(fragment, role, idx)
+
+    for idx in range(request.candidate_count * 3):
+        if len(results) >= request.candidate_count:
+            break
+        fragment = fragments[idx % len(fragments)]
+        role = weave_roles[len(results)] if len(results) < min(3, request.candidate_count) else weave_roles[(idx + len(seeded_specs)) % len(weave_roles)]
+        _append_candidate(fragment, role, idx + len(seeded_specs))
     return results

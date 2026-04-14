@@ -327,11 +327,119 @@ class AdapterTests(unittest.TestCase):
 
         body = envelope["body"]
         self.assertIn("funding mechanics", body)
-        self.assertIn("Private donations", body)
+        self.assertIn("private donations", body.lower())
         self.assertIn("rhetorical cosplay", body)
         metadata = envelope.get("metadata") or {}
         self.assertTrue(metadata.get("combined_top_candidates"))
+        self.assertEqual(metadata.get("composition_strategy"), "blend_top3")
         self.assertEqual(metadata.get("combined_candidate_rank_indexes"), [1, 2, 3])
+        self.assertEqual(metadata.get("selected_candidate_text"), "That framing is lazy and ignores basic funding mechanics.")
+        self.assertTrue(metadata.get("emitted_body_differs_from_selected_candidate"))
+
+    def test_build_reply_envelope_mega_bait_uses_weave_strategy(self) -> None:
+        run = {
+            "id": 103,
+            "platform": "reddit",
+            "persona": "dry_midwit_savant",
+            "selected_objective": "tilt",
+            "selected_tactic": "calm_reduction",
+            "exit_state": "one_more_spike",
+            "candidates": [
+                {
+                    "text": "That framing is lazy and ignores basic funding mechanics.",
+                    "rank_index": 1,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.91,
+                    "estimated_bite_score": 0.52,
+                    "estimated_audience_score": 0.44,
+                    "critic_penalty": 0.08,
+                },
+                {
+                    "text": "Private donations do not replace public priorities.",
+                    "rank_index": 2,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.88,
+                    "estimated_bite_score": 0.49,
+                    "estimated_audience_score": 0.41,
+                    "critic_penalty": 0.09,
+                },
+                {
+                    "text": "Waving 'pay for it yourself' as a fix is rhetorical cosplay.",
+                    "rank_index": 3,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.86,
+                    "estimated_bite_score": 0.53,
+                    "estimated_audience_score": 0.39,
+                    "critic_penalty": 0.11,
+                },
+            ],
+        }
+
+        envelope = build_reply_envelope(
+            run,
+            selection_strategy="mega_bait",
+            thread_id="t3_deadbeef",
+            reply_to_id="t1_abc",
+        )
+
+        body = envelope["body"]
+        self.assertIn("funding mechanics", body)
+        self.assertIn("private donations", body.lower())
+        self.assertIn("rhetorical cosplay", body)
+        metadata = envelope.get("metadata") or {}
+        self.assertEqual(metadata.get("composition_strategy"), "mega_bait")
+        self.assertTrue(metadata.get("combined_top_candidates"))
+        self.assertEqual(metadata.get("combined_candidate_rank_indexes"), [1, 2, 3])
+
+    def test_build_reply_envelope_surfaces_selection_filter_fallback(self) -> None:
+        run = {
+            "id": 102,
+            "platform": "reddit",
+            "persona": "dry_midwit_savant",
+            "selected_objective": "tilt",
+            "selected_tactic": "calm_reduction",
+            "exit_state": "one_more_spike",
+            "candidates": [
+                {
+                    "text": "winner text",
+                    "rank_index": 1,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.9,
+                    "estimated_bite_score": 0.5,
+                    "estimated_audience_score": 0.4,
+                    "critic_penalty": 0.1,
+                },
+                {
+                    "text": "runner up",
+                    "rank_index": 2,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.7,
+                    "estimated_bite_score": 0.4,
+                    "estimated_audience_score": 0.35,
+                    "critic_penalty": 0.2,
+                },
+            ],
+        }
+
+        envelope = build_reply_envelope(
+            run,
+            selection_strategy="top_score",
+            tactic="reverse_interrogation",
+            objective="audience_win",
+            thread_id="t3_deadbeef",
+            reply_to_id="t1_abc",
+        )
+
+        metadata = envelope.get("metadata") or {}
+        self.assertTrue(metadata.get("selection_filter_fallback"))
+        self.assertEqual(metadata.get("selected_candidate_text"), "winner text")
+        self.assertFalse(metadata.get("emitted_body_differs_from_selected_candidate"))
+        self.assertEqual(envelope["body"], "winner text")
 
     def test_validate_target_enforces_capabilities(self) -> None:
         validate_target(normalize_target("reddit", reply_to_id="t1_dead"))
@@ -403,6 +511,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(envelope["metadata"]["selection_preset"], "default")
         self.assertEqual(envelope["metadata"]["preferred_dispatch_driver"], "reddit_api")
         self.assertEqual(envelope["metadata"]["thread_context"]["message_count"], 2)
+        self.assertEqual(envelope["metadata"]["selected_candidate_text"], envelope["body"])
+        self.assertFalse(envelope["metadata"]["emitted_body_differs_from_selected_candidate"])
 
     def test_emit_request_and_preview_panel(self) -> None:
         run = {
@@ -435,6 +545,11 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("outcome_overlay", panel)
         self.assertEqual(panel["outcome_overlay"]["matching_runs"], 0)
         self.assertEqual(panel["outcome_overlay"]["confidence"], "none")
+        self.assertEqual(panel["envelope"]["body"], "test body")
+        self.assertEqual(panel["envelope"]["metadata"]["selected_candidate_text"], "test body")
+        self.assertFalse(panel["envelope"]["metadata"]["combined_top_candidates"])
+        self.assertFalse(panel["body_alignment"]["emitted_body_differs_from_selected_candidate"])
+        self.assertFalse(panel["body_alignment"]["selection_filter_fallback"])
         self.assertGreaterEqual(len(panel["variants"]), 1)
         self.assertEqual(panel["variant_generation"]["dedupe_basis"], "body, candidate_tactic, candidate_objective, platform")
         self.assertEqual(panel["variants"][0]["history_rank"], 1)
@@ -571,6 +686,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(panel["variant_generation"]["ranking_basis"], "historical_score, operator_score, engagement_rate, matching_runs, candidate_rank_score")
         self.assertEqual(panel["variant_generation"]["dedupe_basis"], "body, candidate_tactic, candidate_objective, platform")
         self.assertEqual(panel["variant_generation"]["comparison_basis"], "primary vs runner-up deltas on historical score, operator score, engagement rate, matching runs, candidate rank score")
+        self.assertEqual(panel["body_alignment"]["selected_candidate_text"], panel["envelope"]["metadata"]["selected_candidate_text"])
 
     def test_build_preview_panel_dedupes_equivalent_envelopes(self) -> None:
         run = {
@@ -615,6 +731,72 @@ class AdapterTests(unittest.TestCase):
             for variant in panel["variants"]
         }
         self.assertEqual(len(dedupe_keys), len(panel["variants"]))
+
+    def test_build_preview_panel_strategy_variants_keep_composition_modes_explicit(self) -> None:
+        run = {
+            "id": 12,
+            "platform": "reddit",
+            "persona": "dry_midwit_savant",
+            "plan": {
+                "selected_objective": "tilt",
+                "selected_tactic": "calm_reduction",
+                "exit_state": "one_more_spike",
+            },
+            "selected_objective": "tilt",
+            "selected_tactic": "calm_reduction",
+            "exit_state": "one_more_spike",
+            "candidates": [
+                {
+                    "text": "That framing is lazy and ignores basic funding mechanics.",
+                    "rank_index": 1,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.91,
+                    "estimated_bite_score": 0.52,
+                    "estimated_audience_score": 0.44,
+                    "critic_penalty": 0.08,
+                },
+                {
+                    "text": "Private donations do not replace public priorities.",
+                    "rank_index": 2,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.88,
+                    "estimated_bite_score": 0.49,
+                    "estimated_audience_score": 0.41,
+                    "critic_penalty": 0.09,
+                },
+                {
+                    "text": "Waving 'pay for it yourself' as a fix is rhetorical cosplay.",
+                    "rank_index": 3,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.86,
+                    "estimated_bite_score": 0.53,
+                    "estimated_audience_score": 0.39,
+                    "critic_penalty": 0.11,
+                },
+            ],
+        }
+
+        panel = build_preview_panel(
+            run,
+            thread_id="t3_deadbeef",
+            reply_to_id="t1_abc",
+            author_handle="grave",
+            include_all_presets=False,
+            include_strategy_variants=True,
+            include_filter_variants=False,
+        )
+
+        mega_bait_variant = next(variant for variant in panel["variants"] if variant["name"] == "strategy:mega_bait")
+        self.assertEqual(mega_bait_variant["envelope"]["metadata"]["composition_strategy"], "mega_bait")
+        self.assertEqual(mega_bait_variant["envelope"]["metadata"]["combined_candidate_rank_indexes"], [1, 2, 3])
+        self.assertTrue(mega_bait_variant["body_alignment"]["combined_top_candidates"])
+        self.assertTrue(mega_bait_variant["body_alignment"]["emitted_body_differs_from_selected_candidate"])
+        blend_top3_variant = next((variant for variant in panel["variants"] if variant["name"] == "strategy:blend_top3"), None)
+        if blend_top3_variant is not None:
+            self.assertTrue(blend_top3_variant["body_alignment"]["combined_top_candidates"])
 
     def test_build_preview_panel_auto_best_variant_exposes_rationale(self) -> None:
         run = {

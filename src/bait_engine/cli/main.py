@@ -44,11 +44,38 @@ def _build_provider(
     base_url: str | None = None,
     timeout_seconds: int = 30,
 ) -> TextGenerationProvider:
+    effective_model = model or os.environ.get("BAIT_ENGINE_CHEAP_MODEL") or os.environ.get("BAIT_ENGINE_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-5.4-mini"
     return OpenAICompatibleProvider(
-        model=model,
+        model=effective_model,
         base_url=base_url,
         timeout_seconds=timeout_seconds,
     )
+
+
+def _draft_generation_state(
+    *,
+    heuristic_only: bool,
+    provider: TextGenerationProvider | None,
+    selected_model: str | None = None,
+    selected_model_tier: str | None = None,
+) -> dict[str, Any]:
+    provider_requested = not heuristic_only
+    provider_available = bool(provider.is_available()) if provider is not None else False
+    if not provider_requested:
+        provider_fallback_state = "heuristic_only"
+    elif provider_available:
+        provider_fallback_state = "none"
+    else:
+        provider_fallback_state = "provider_unavailable"
+    provider_model = getattr(provider, "model", None) if provider is not None else None
+    return {
+        "provider_requested": provider_requested,
+        "provider_available": provider_available,
+        "provider_fallback_state": provider_fallback_state,
+        "provider_model": provider_model,
+        "selected_model": selected_model,
+        "selected_model_tier": selected_model_tier,
+    }
 
 
 def _generate_draft(
@@ -271,7 +298,7 @@ def cmd_draft(
     base_url: str | None = None,
     timeout_seconds: int = 30,
     force_engage: bool = False,
-    mutation_source: str = "auto",
+    mutation_source: str = "none",
 ) -> dict:
     provider = None if heuristic_only else _build_provider(model=model, base_url=base_url, timeout_seconds=timeout_seconds)
     if save:
@@ -290,6 +317,7 @@ def cmd_draft(
         plan = stored["plan"]
         request = repo.rebuild_request(stored["id"], candidate_count=candidate_count, mutation_source=mutation_source)
         router_meta = (plan.get("persona_router") if isinstance(plan, dict) else None) or {}
+        generation_state = plan.get("generation_state") if isinstance(plan, dict) else None
         return {
             "saved": True,
             "run_id": stored["id"],
@@ -303,6 +331,7 @@ def cmd_draft(
             "calibration_timestamp": router_meta.get("calibration_timestamp"),
             "segment_confidence": router_meta.get("segment_confidence"),
             "segment_key": router_meta.get("segment_key"),
+            "generation_state": generation_state,
             "prompt_payload": build_prompt_payload(request),
             "draft": {"candidates": stored["candidates"]},
         }
@@ -347,6 +376,12 @@ def cmd_draft(
     draft = _generate_draft(request, heuristic_only=heuristic_only, provider=provider)
     plan_payload = plan.model_dump(mode="json")
     router_meta = plan_payload.get("persona_router") or {}
+    generation_state = _draft_generation_state(
+        heuristic_only=heuristic_only,
+        provider=provider,
+        selected_model=getattr(provider, "model", None),
+        selected_model_tier=None,
+    )
     return {
         "saved": False,
         "analysis": analysis.model_dump(mode="json"),
@@ -359,6 +394,7 @@ def cmd_draft(
         "calibration_timestamp": router_meta.get("calibration_timestamp"),
         "segment_confidence": router_meta.get("segment_confidence"),
         "segment_key": router_meta.get("segment_key"),
+        "generation_state": generation_state,
         "prompt_payload": build_prompt_payload(request),
         "draft": draft.model_dump(mode="json"),
     }
@@ -956,25 +992,38 @@ def cmd_replay(
     model: str | None = None,
     base_url: str | None = None,
     timeout_seconds: int = 30,
-    mutation_source: str = "auto",
+    mutation_source: str = "none",
     response_text: str | None = None,
 ) -> dict:
     repo = RunRepository(db_path)
     stored = repo.get_run(run_id)
+    stored_plan = stored.get("plan") if isinstance(stored.get("plan"), dict) else {}
+    stored_selected_model = str(stored_plan.get("selected_model") or "").strip() or None
+    stored_selected_model_tier = str(stored_plan.get("selected_model_tier") or "").strip() or None
+    effective_model = model if model is not None else stored_selected_model
     request = repo.rebuild_request(run_id, candidate_count=candidate_count, mutation_source=mutation_source)
     response_text_value = str(response_text or "").strip() or None
     if response_text_value is not None:
         request = request.model_copy(
             update={"source_text": _append_response_to_source_text(str(stored.get("source_text") or ""), response_text_value)}
         )
-    provider = None if heuristic_only else _build_provider(model=model, base_url=base_url, timeout_seconds=timeout_seconds)
+    provider = None if heuristic_only else _build_provider(model=effective_model, base_url=base_url, timeout_seconds=timeout_seconds)
     draft = _generate_draft(request, heuristic_only=heuristic_only, provider=provider)
+    generation_state = _draft_generation_state(
+        heuristic_only=heuristic_only,
+        provider=provider,
+        selected_model=effective_model,
+        selected_model_tier=stored_selected_model_tier,
+    )
     return {
         "run_id": run_id,
         "response_text": response_text_value,
         "source_text": request.source_text,
         "persona": stored["persona"],
+        "selected_model": effective_model,
+        "selected_model_tier": stored_selected_model_tier,
         "plan": request.plan.model_dump(mode="json"),
+        "generation_state": generation_state,
         "prompt_payload": build_prompt_payload(request),
         "draft": draft.model_dump(mode="json"),
     }
@@ -1679,7 +1728,7 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
 
     def _dashboard_blend_preview(run_row: dict[str, Any]) -> dict[str, Any] | None:
         try:
-            envelope = build_reply_envelope(run_row, selection_strategy="blend_top3", allow_incomplete_target=True)
+            envelope = build_reply_envelope(run_row, selection_strategy="mega_bait", allow_incomplete_target=True)
             body = str(envelope.get("body") or "").strip()
             if not body:
                 return None
@@ -1748,12 +1797,13 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
             rank_label = " / ".join(f"#{rank}" for rank in blend_preview["rank_indexes"]) if blend_preview["rank_indexes"] else "top 3"
             blend_body = str(blend_preview["body"])
             response_block = (
-                '<div class="response"><span class="small">Combined response (blend_top3)</span>'
-                f'<div class="small" style="margin-top:4px;">Connected from {html.escape(rank_label)}</div>'
+                '<details class="response" style="margin-top:10px;">'
+                '<summary><span class="small">Mega bait weave (manual lab only)</span></summary>'
+                f'<div class="small" style="margin-top:8px;">Woven from {html.escape(rank_label)}. This is a manual mega-bait composition, not the default emitted candidate.</div>'
                 f'<pre style="white-space:pre-wrap; background:#0f1115; border:1px solid #2b313d; border-radius:8px; padding:10px; margin:6px 0 0 0;">{html.escape(blend_body[:1200])}</pre>'
                 f'<div class="actions" style="margin-top:8px;">'
-                f'<button type="button" class="small" onclick="saveCandidateResponse({_js_call_arg(blend_body)}, {run_persona_js}, {run_platform_js})">Save combined</button>'
-                f'<button type="button" class="small" onclick="generateFromCombined({run_id_js}, {_js_call_arg(blend_body)}, {run_persona_js}, {run_platform_js})">Generate response</button>'
+                f'<button type="button" class="small" onclick="saveCandidateResponse({_js_call_arg(blend_body)}, {run_persona_js}, {run_platform_js})">Save mega bait</button>'
+                f'<button type="button" class="small" onclick="generateFromCombined({run_id_js}, {_js_call_arg(blend_body)}, {run_persona_js}, {run_platform_js})">Generate from mega bait</button>'
                 f'<button type="button" class="small" onclick="generateUnderRun({run_id_js}, null, {run_persona_js}, {run_platform_js})">Add + generate under run</button>'
                 '</div>'
                 f'<div id="combined-generator-output-{run_id_value}" class="small" style="display:none; margin-top:8px; background:#131926; border:1px solid #2b313d; border-radius:8px; padding:10px;">'
@@ -1761,10 +1811,10 @@ def _render_dashboard_html(payload: dict[str, Any], base_url: str) -> str:
                 '<div data-combined-output-text style="white-space:pre-wrap;"></div>'
                 '<div style="margin-top:8px;"><a data-combined-output-link href="#">Open generated run</a></div>'
                 '</div>'
-                '</div>'
+                '</details>'
             )
         else:
-            response_block = '<div class="response"><span class="small">Combined response (blend_top3)</span><div class="small">No candidate response saved.</div></div>'
+            response_block = '<details class="response" style="margin-top:10px;"><summary><span class="small">Mega bait weave (manual lab only)</span></summary><div class="small" style="margin-top:8px;">No mega-bait preview available for this run.</div></details>'
 
         followup_block = (
             '<div class="response" style="margin-top:10px;">'
@@ -2301,7 +2351,7 @@ async function submitDraft() {{
         persona: draftPersona.value || 'dry_midwit_savant',
         platform: draftPlatform.value || 'reddit',
         count: Number(draftCount.value || 5),
-        force_engage: true,
+        force_engage: false,
       }}),
     }});
     const payload = await response.json();
@@ -2337,7 +2387,7 @@ async function saveCandidateResponse(text, persona, platform) {{
         persona: draftPersona.value || 'dry_midwit_savant',
         platform: draftPlatform.value || 'reddit',
         count: Number(draftCount.value || 5),
-        force_engage: true,
+        force_engage: false,
       }}),
     }});
     const payload = await response.json();
@@ -2372,7 +2422,7 @@ async function generateFromCombined(runId, combinedText, persona, platform) {{
         persona: String(persona || draftPersona.value || 'dry_midwit_savant'),
         platform: String(platform || draftPlatform.value || 'reddit'),
         count: 3,
-        force_engage: true,
+        force_engage: false,
       }}),
     }});
     const payload = await response.json();
@@ -3238,7 +3288,7 @@ def _create_panel_http_server(
                         save=True,
                         db_path=db_path,
                         platform=str(payload.get("platform") or "reddit"),
-                        force_engage=bool(payload.get("force_engage", True)),
+                        force_engage=bool(payload.get("force_engage", False)),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._write_json(400, {"error": str(exc)})
@@ -3572,7 +3622,7 @@ def main() -> None:
     draft_p.add_argument("--model", default=None)
     draft_p.add_argument("--base-url", default=None)
     draft_p.add_argument("--timeout-seconds", type=int, default=30)
-    draft_p.add_argument("--mutation-source", choices=["auto", "none"], default="auto")
+    draft_p.add_argument("--mutation-source", choices=["auto", "none"], default="none")
 
     runs_p = sub.add_parser("runs")
     runs_p.add_argument("--limit", type=int, default=20)
@@ -3589,7 +3639,7 @@ def main() -> None:
     replay_p.add_argument("--model", default=None)
     replay_p.add_argument("--base-url", default=None)
     replay_p.add_argument("--timeout-seconds", type=int, default=30)
-    replay_p.add_argument("--mutation-source", choices=["auto", "none"], default="auto")
+    replay_p.add_argument("--mutation-source", choices=["auto", "none"], default="none")
 
     autopsy_p = sub.add_parser("autopsy")
     autopsy_p.add_argument("run_id", type=int)
@@ -3662,7 +3712,7 @@ def main() -> None:
     adapter_preview_p = sub.add_parser("adapter-preview")
     adapter_preview_p.add_argument("run_id", type=int)
     adapter_preview_p.add_argument("--candidate-rank-index", type=int, default=1)
-    adapter_preview_p.add_argument("--selection-strategy", choices=["rank", "top_score", "highest_bite", "highest_audience", "lowest_penalty", "auto_best", "blend_top3"], default="rank")
+    adapter_preview_p.add_argument("--selection-strategy", choices=["rank", "top_score", "highest_bite", "highest_audience", "lowest_penalty", "auto_best", "blend_top3", "mega_bait"], default="rank")
     adapter_preview_p.add_argument("--selection-preset", default=None)
     adapter_preview_p.add_argument("--tactic", default=None)
     adapter_preview_p.add_argument("--objective", default=None)
@@ -3678,7 +3728,7 @@ def main() -> None:
     emit_preview_p = sub.add_parser("emit-preview")
     emit_preview_p.add_argument("run_id", type=int)
     emit_preview_p.add_argument("--candidate-rank-index", type=int, default=1)
-    emit_preview_p.add_argument("--selection-strategy", choices=["rank", "top_score", "highest_bite", "highest_audience", "lowest_penalty", "auto_best", "blend_top3"], default="rank")
+    emit_preview_p.add_argument("--selection-strategy", choices=["rank", "top_score", "highest_bite", "highest_audience", "lowest_penalty", "auto_best", "blend_top3", "mega_bait"], default="rank")
     emit_preview_p.add_argument("--selection-preset", default=None)
     emit_preview_p.add_argument("--tactic", default=None)
     emit_preview_p.add_argument("--objective", default=None)

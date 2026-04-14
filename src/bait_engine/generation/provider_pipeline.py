@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from bait_engine.generation.contracts import CandidateReply, DraftRequest, DraftResult
-from bait_engine.generation.critic import critique_candidate, starts_with_agreement_language
+from bait_engine.generation.critic import critique_candidate, objective_shape_ok, starts_with_agreement_language
 from bait_engine.generation.llm_writer import generate_candidates_via_provider
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates
@@ -67,11 +67,30 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
                 tactic=request.plan.selected_tactic,
                 objective=request.plan.selected_objective.value,
                 persona=request.persona.name,
+                grounding_score=0.22,
+                generation_source="disagreement_fallback",
                 estimated_bite_score=0.58,
                 estimated_audience_score=0.54,
             )
         )
     return fallback
+
+
+def _filter_valid_candidates(candidates: list[CandidateReply], request: DraftRequest) -> list[CandidateReply]:
+    objective = request.plan.selected_objective.value
+    if objective == "do_not_engage":
+        return []
+
+    valid: list[CandidateReply] = []
+    for candidate in candidates:
+        if starts_with_agreement_language(candidate.text):
+            continue
+        if candidate.grounding_score < 0.16:
+            continue
+        if not objective_shape_ok(candidate.text, objective):
+            continue
+        valid.append(candidate)
+    return valid
 
 
 def draft_candidates_with_provider(
@@ -82,19 +101,38 @@ def draft_candidates_with_provider(
 
     raw_candidates = []
     if provider.is_available():
-        try:
-            raw_candidates = generate_candidates_via_provider(request, provider)
-        except RuntimeError as exc:
-            _log_provider_failure(request, provider, exc, unexpected=False)
-            raw_candidates = []
-        except Exception as exc:
-            _log_provider_failure(request, provider, exc, unexpected=True)
-            raw_candidates = []
+        for attempt in range(2):
+            try:
+                raw_candidates = generate_candidates_via_provider(request, provider)
+                if attempt == 0 or raw_candidates:
+                    break
+            except RuntimeError as exc:
+                if attempt == 0:
+                    continue
+                _log_provider_failure(request, provider, exc, unexpected=False)
+                raw_candidates = []
+            except Exception as exc:
+                if attempt == 0:
+                    continue
+                _log_provider_failure(request, provider, exc, unexpected=True)
+                raw_candidates = []
 
     if not raw_candidates:
-        raw_candidates = generate_candidates(request)
+        raw_candidates = [
+            candidate.model_copy(update={"generation_source": "heuristic_fallback"})
+            for candidate in generate_candidates(request)
+        ]
 
-    critiqued = [critique_candidate(candidate, request.persona) for candidate in raw_candidates]
-    guarded = _enforce_disagreement(critiqued, request)
+    critiqued = [
+        critique_candidate(
+            candidate,
+            request.persona,
+            source_text=request.source_text,
+            objective=request.plan.selected_objective.value,
+        )
+        for candidate in raw_candidates
+    ]
+    validated = _filter_valid_candidates(critiqued, request)
+    guarded = _enforce_disagreement(validated, request)
     ranked = rank_candidates(guarded)
     return DraftResult(request=request, candidates=ranked)

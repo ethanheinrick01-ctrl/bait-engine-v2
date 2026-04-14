@@ -19,6 +19,50 @@ def _validate_platform(platform: str) -> None:
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_BLEND_PREFIXES = {
+    "small correction",
+    "premise check",
+    "quick calibration",
+    "translation",
+    "let's tighten this",
+    "version that survives contact",
+    "if we're scoring rigor",
+    "mechanically",
+    "clean room pass",
+    "diagnosis",
+    "reality check",
+    "in one line",
+    "plain terms",
+    "premise first",
+    "quick question",
+}
+_BLEND_STING_MARKERS = (
+    "that's the gap",
+    "that's the miss",
+    "that's the whole gap",
+    "that's the whole trick",
+    "prove it",
+    "category slop",
+    "label swapping",
+    "cartoon logic",
+    "confidence cosplay",
+    "rhetorical cosplay",
+    "cosplay",
+    "still underdetermined",
+)
+_BLEND_RELATION_MARKERS = (
+    " doesn't ",
+    " isn't ",
+    " not ",
+    " equivalent ",
+    " equals ",
+    " count as ",
+    " becomes ",
+    " make ",
+    " with ",
+    " enough for ",
+    " get you ",
+)
 
 
 def _normalize_sentence(text: str) -> str:
@@ -34,9 +78,73 @@ def _sentence_fingerprint(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
-def _compose_top_candidates(candidates: list[dict[str, Any]], limit: int = 3) -> tuple[str | None, list[int]]:
+def _candidate_text(candidate: dict[str, Any]) -> str:
+    text = candidate.get("text")
+    if text is None:
+        return ""
+    if isinstance(text, str):
+        return text
+    return str(text)
+
+
+def _strip_blend_prefix(text: str) -> str:
+    cleaned = " ".join((text or "").strip().split())
+    lowered = cleaned.lower()
+    for prefix in sorted(_BLEND_PREFIXES, key=len, reverse=True):
+        token = f"{prefix}, "
+        if lowered.startswith(token):
+            return cleaned[len(token):].strip()
+    return cleaned
+
+
+def _candidate_clauses(text: str) -> list[str]:
+    cleaned = _strip_blend_prefix(text)
+    clauses: list[str] = []
+    for sentence in _SENTENCE_SPLIT_RE.split(cleaned):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        for clause in re.split(r",\s+", sentence):
+            normalized = " ".join(clause.strip().split())
+            if len(normalized.split()) < 3:
+                continue
+            clauses.append(normalized.rstrip(".?!"))
+    return clauses
+
+
+def _looks_like_sting(clause: str) -> bool:
+    lowered = f" {clause.lower()} "
+    return clause.lower().startswith("that's ") or any(marker in lowered for marker in _BLEND_STING_MARKERS)
+
+
+def _looks_like_relation(clause: str) -> bool:
+    lowered = f" {clause.lower()} "
+    return any(marker in lowered for marker in _BLEND_RELATION_MARKERS)
+
+
+def _lowercase_lead(text: str) -> str:
+    if not text:
+        return text
+    if text[0].isalpha():
+        return text[0].lower() + text[1:]
+    return text
+
+
+def _best_clause(clauses: list[str], *, predicate: callable[[str], bool] | None = None) -> str | None:
+    filtered = [clause for clause in clauses if predicate(clause)] if predicate is not None else list(clauses)
+    if not filtered:
+        return None
+    return max(filtered, key=lambda clause: (len(clause.split()), len(clause)))
+
+
+def _compose_top_candidates(
+    candidates: list[dict[str, Any]],
+    limit: int = 3,
+    *,
+    strategy: str | None = None,
+) -> tuple[str | None, list[int]]:
     ranked = sorted(candidates, key=lambda item: int(item.get("rank_index") or 9999))
-    selected: list[tuple[str, int]] = []
+    selected: list[tuple[str, int, str | None]] = []
     seen: set[str] = set()
 
     for item in ranked:
@@ -44,36 +152,66 @@ def _compose_top_candidates(candidates: list[dict[str, Any]], limit: int = 3) ->
         raw = str(item.get("text") or "").strip()
         if not raw:
             continue
-        sentences = [
-            _normalize_sentence(part)
-            for part in _SENTENCE_SPLIT_RE.split(raw)
-            if part and part.strip()
-        ]
-        if not sentences:
-            continue
-
-        preferred = sentences[0]
-        for sentence in sentences:
-            if 45 <= len(sentence) <= 240:
-                preferred = sentence
-                break
-
-        key = _sentence_fingerprint(preferred)
+        cleaned = _strip_blend_prefix(raw)
+        key = _sentence_fingerprint(cleaned)
         if not key or key in seen:
             continue
         seen.add(key)
-        selected.append((preferred, rank_index))
+        selected.append((cleaned, rank_index, item.get("weave_role")))
         if len(selected) >= max(limit, 1):
             break
 
     if not selected:
         return None, []
 
-    ordered_sentences = [text for text, _ in selected]
-    rank_indexes = [rank for _, rank in selected]
+    lead = support = sting = None
+    rank_indexes: list[int] = []
 
-    combined = " ".join(ordered_sentences).strip()
-    return combined, rank_indexes
+    if strategy == "mega_bait":
+        role_map: dict[str, tuple[str, int]] = {}
+        for text, rank, role in selected:
+            if role and role not in role_map:
+                role_map[role] = (text, rank)
+        lead_entry = role_map.get("lead")
+        support_entry = role_map.get("support")
+        sting_entry = role_map.get("sting")
+        if lead_entry or support_entry or sting_entry:
+            chosen_entries = [entry for entry in (lead_entry, support_entry, sting_entry) if entry is not None]
+            rank_indexes = [rank for _, rank in chosen_entries]
+            lead_clauses = _candidate_clauses((lead_entry or chosen_entries[0])[0])
+            support_clauses = _candidate_clauses(support_entry[0]) if support_entry is not None else []
+            sting_clauses = _candidate_clauses(sting_entry[0]) if sting_entry is not None else []
+            lead = _best_clause(lead_clauses, predicate=_looks_like_relation) or _best_clause(lead_clauses) or (lead_entry or chosen_entries[0])[0].rstrip(".?!")
+            if support_entry is not None:
+                support = _best_clause(support_clauses, predicate=_looks_like_relation) or _best_clause(support_clauses) or support_entry[0].rstrip(".?!")
+            if sting_entry is not None:
+                sting = _best_clause(sting_clauses, predicate=_looks_like_sting) or _best_clause(sting_clauses) or sting_entry[0].rstrip(".?!")
+
+    if lead is None:
+        rank_indexes = [rank for _, rank, _ in selected]
+        candidate_clauses = [_candidate_clauses(text) for text, _, _ in selected]
+        lead = _best_clause(candidate_clauses[0], predicate=_looks_like_relation) or _best_clause(candidate_clauses[0]) or selected[0][0].rstrip(".?!")
+        for clauses in candidate_clauses:
+            if sting is None:
+                sting = _best_clause(clauses, predicate=_looks_like_sting)
+            if support is None:
+                candidate_support = _best_clause(clauses, predicate=_looks_like_relation) or _best_clause(clauses)
+                if candidate_support and _sentence_fingerprint(candidate_support) != _sentence_fingerprint(lead):
+                    support = candidate_support
+
+    if support and _sentence_fingerprint(support) == _sentence_fingerprint(lead):
+        support = None
+    if sting and _sentence_fingerprint(sting) in {_sentence_fingerprint(lead), _sentence_fingerprint(support or "")}:
+        sting = None
+
+    body = lead.rstrip(".?!")
+    if support:
+        body = f"{body}, and {_lowercase_lead(support.rstrip('.?!'))}"
+    if sting:
+        final = f"{body}. {sting.rstrip('.?!').capitalize()}."
+    else:
+        final = f"{body}."
+    return final.strip(), rank_indexes
 
 
 def build_reply_envelope(
@@ -136,6 +274,7 @@ def build_reply_envelope(
         resolved_objective = None
         selection_filter_fallback = True
 
+    selected_candidate_text = _candidate_text(candidate)
     target = normalize_target(
         platform=platform,
         thread_id=thread_id,
@@ -152,13 +291,16 @@ def build_reply_envelope(
     if resolved_objective is not None:
         candidate_pool = [item for item in candidate_pool if item.get("objective") == resolved_objective]
 
-    should_combine = bool(combine_top_candidates or resolved_strategy == "blend_top3")
-    composed_body, composed_ranks = _compose_top_candidates(candidate_pool, limit=3) if should_combine else (None, [])
-    resolved_body = composed_body or candidate["text"]
+    should_combine = bool(combine_top_candidates or resolved_strategy in {"blend_top3", "mega_bait"})
+    compose_limit = len(candidate_pool) if resolved_strategy == "mega_bait" else 3
+    composed_body, composed_ranks = _compose_top_candidates(candidate_pool, limit=compose_limit, strategy=resolved_strategy) if should_combine else (None, [])
+    resolved_body = composed_body or selected_candidate_text
+    emitted_body_differs_from_selected_candidate = resolved_body != selected_candidate_text
+    selected_candidate_rank_index = int(candidate.get("rank_index") or candidate_rank_index)
 
     envelope = OutboundReplyEnvelope(
         run_id=run["id"],
-        candidate_rank_index=int(candidate.get("rank_index") or candidate_rank_index),
+        candidate_rank_index=selected_candidate_rank_index,
         platform=platform,
         persona=run.get("persona") or "unknown",
         objective=run.get("selected_objective"),
@@ -174,7 +316,11 @@ def build_reply_envelope(
             "candidate_tactic": candidate.get("tactic"),
             "candidate_objective": candidate.get("objective"),
             "candidate_rank_score": candidate.get("rank_score"),
+            "selected_candidate_rank_index": selected_candidate_rank_index,
+            "selected_candidate_text": selected_candidate_text,
+            "emitted_body_differs_from_selected_candidate": emitted_body_differs_from_selected_candidate,
             "combined_top_candidates": should_combine,
+            "composition_strategy": resolved_strategy if should_combine else None,
             "combined_candidate_rank_indexes": composed_ranks,
             "target_complete": target_complete,
             "auto_best_rationale": describe_auto_best_candidate(candidate, reputation_data)

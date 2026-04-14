@@ -20,6 +20,8 @@ _SELECTION_STRATEGIES: tuple[SelectionStrategy, ...] = (
     "highest_audience",
     "lowest_penalty",
     "auto_best",
+    "blend_top3",
+    "mega_bait",
 )
 
 
@@ -330,7 +332,7 @@ def _build_panel_variant(
     panel_reviews: list[dict[str, Any]] | None = None,
     review_bridge: dict[str, Any] | None = None,
     reputation_data: dict[str, Any] | None = None,
-    combine_top_candidates: bool = True,
+    combine_top_candidates: bool = False,
 ) -> dict[str, Any]:
     envelope = build_reply_envelope(
         run,
@@ -361,6 +363,10 @@ def _build_panel_variant(
         objective=resolved_objective,
         review_bridge=review_bridge,
     )
+    emit_request = build_emit_request(envelope)
+    selected_candidate_text = str(metadata.get("selected_candidate_text") or envelope.get("body") or "")
+    envelope_body = str(envelope.get("body") or "")
+    emit_request_body = str(emit_request.get("body") or "")
     return {
         "name": name,
         "label": label,
@@ -370,6 +376,8 @@ def _build_panel_variant(
             "tactic": resolved_tactic,
             "objective": resolved_objective,
             "auto_best_rationale": metadata.get("auto_best_rationale"),
+            "selection_filter_fallback": metadata.get("selection_filter_fallback"),
+            "selected_candidate_rank_index": metadata.get("selected_candidate_rank_index"),
         },
         "outcome_overlay": outcome_overlay,
         "review_overlay": review_overlay,
@@ -378,7 +386,17 @@ def _build_panel_variant(
         "recent_match_lines": _simplify_recent_matches(outcome_overlay.get("recent_matches", [])),
         "review_action_templates": review_action_templates,
         "envelope": envelope,
-        "emit_request": build_emit_request(envelope),
+        "emit_request": emit_request,
+        "body_alignment": {
+            "selected_candidate_rank_index": metadata.get("selected_candidate_rank_index"),
+            "selected_candidate_text": selected_candidate_text,
+            "envelope_body": envelope_body,
+            "emit_request_body": emit_request_body,
+            "selection_filter_fallback": metadata.get("selection_filter_fallback"),
+            "combined_top_candidates": metadata.get("combined_top_candidates"),
+            "emitted_body_differs_from_selected_candidate": emit_request_body != selected_candidate_text,
+            "envelope_body_differs_from_selected_candidate": envelope_body != selected_candidate_text,
+        },
     }
 
 
@@ -602,7 +620,6 @@ def build_preview_panel(
         author_handle=author_handle,
         context=context,
         reputation_data=reputation_data,
-        combine_top_candidates=True,
         allow_incomplete_target=True,
     )
     emit_request = build_emit_request(envelope)
@@ -717,6 +734,7 @@ def build_preview_panel(
         },
         "outcome_overlay": primary_variant["outcome_overlay"],
         "review_overlay": primary_variant["review_overlay"],
+        "body_alignment": primary_variant["body_alignment"],
         "review_bridge": review_bridge,
         "controls": {
             "selection_strategies": list(_SELECTION_STRATEGIES),
@@ -783,6 +801,7 @@ def render_preview_panel_html(panel: dict[str, Any]) -> str:
         for line in primary_variant.get("recent_match_lines", [])
     )
     comparison_summary = html.escape(str(comparison_to_runner_up.get("summary", "No runner-up comparison available.")))
+    body_alignment = primary_variant.get("body_alignment") or {}
     comparison_rows = "".join(
         f"<li><b>{html.escape(str(item.get('label') or item.get('key') or 'metric'))}</b>: "
         f"Δ {html.escape(str(item.get('delta')))} · winner {html.escape(str(item.get('winner_value')))} · "
@@ -857,6 +876,10 @@ def render_preview_panel_html(panel: dict[str, Any]) -> str:
       <h3>Variant generation</h3>
       <ul>{generation_rows}</ul>
       <p>Primary variant: <b>{html.escape(str(primary_variant.get('label', 'recommended')))}</b> (rank {html.escape(str(primary_variant.get('history_rank', 1)))})</p>
+      <p id="selectedCandidateStatus" class="muted">Selected candidate rank: {html.escape(str(body_alignment.get('selected_candidate_rank_index') or primary_variant.get('history_rank', 1)))}</p>
+      <p id="selectionFallbackStatus" class="muted">Selection fallback: {html.escape('yes' if body_alignment.get('selection_filter_fallback') else 'no')}</p>
+      <p id="bodyAlignmentStatus" class="muted">Emit body differs from selected candidate: {html.escape('yes' if body_alignment.get('emitted_body_differs_from_selected_candidate') else 'no')}</p>
+      <p id="combinedTopCandidatesStatus" class="muted">Combined top candidates: {html.escape('yes' if body_alignment.get('combined_top_candidates') else 'no')}</p>
       <p id="historyRationale" class="muted">{html.escape(str(primary_variant.get('history_rationale', '')))}</p>
       <p id="reviewRationale" class="muted">{html.escape(str(primary_variant.get('review_rationale', '')))}</p>
       <h3>Comparison deltas</h3>
@@ -976,6 +999,10 @@ const reviewOverlayList = document.getElementById('reviewOverlayList');
 const recentMatchesList = document.getElementById('recentMatchesList');
 const historyRationale = document.getElementById('historyRationale');
 const reviewRationale = document.getElementById('reviewRationale');
+const selectedCandidateStatus = document.getElementById('selectedCandidateStatus');
+const selectionFallbackStatus = document.getElementById('selectionFallbackStatus');
+const bodyAlignmentStatus = document.getElementById('bodyAlignmentStatus');
+const combinedTopCandidatesStatus = document.getElementById('combinedTopCandidatesStatus');
 const comparisonSummary = document.getElementById('comparisonSummary');
 const engagedBadge = document.getElementById('engagedBadge');
 const noBiteBadge = document.getElementById('noBiteBadge');
@@ -1125,6 +1152,7 @@ function renderVariant(variant) {{
   if (panel.envelope?.run_id) {{
     localStorage.setItem(PANEL_STORAGE_KEYS.lastRunId, String(panel.envelope.run_id));
   }}
+  const bodyAlignment = variant.body_alignment || {{}};
   envelopePre.textContent = JSON.stringify(variant.envelope, null, 2);
   emitPre.textContent = JSON.stringify(variant.emit_request, null, 2);
   renderReviewBridge(variant);
@@ -1133,6 +1161,12 @@ function renderVariant(variant) {{
   renderRecentMatches(variant.recent_match_lines);
   historyRationale.textContent = variant.history_rationale || '';
   reviewRationale.textContent = variant.review_rationale || '';
+  selectedCandidateStatus.textContent = `Selected candidate rank: #${{bodyAlignment.selected_candidate_rank_index || variant.history_rank || '?'}}`;
+  selectionFallbackStatus.textContent = `Selection fallback: ${{bodyAlignment.selection_filter_fallback ? 'yes' : 'no'}}`;
+  bodyAlignmentStatus.textContent = bodyAlignment.emitted_body_differs_from_selected_candidate
+    ? 'Emit body differs from selected candidate.'
+    : 'Emit body matches the selected candidate.';
+  combinedTopCandidatesStatus.textContent = `Combined top candidates: ${{bodyAlignment.combined_top_candidates ? 'yes' : 'no'}}`;
   setEmitStatus(`Selected ${{variant.label}}.`);
   const comparison = variant.is_primary ? (panel.primary_variant?.comparison_to_runner_up || null) : null;
   comparisonSummary.textContent = comparison ? comparison.summary : 'Comparison deltas are shown for the current winner only.';
