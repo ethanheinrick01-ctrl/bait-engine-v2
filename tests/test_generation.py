@@ -203,7 +203,22 @@ class GenerationTests(unittest.TestCase):
 
         self.assertEqual(len(fallbacks), 3)
         self.assertTrue(any("compatibility" in line.lower() for line in fallbacks))
+        self.assertTrue(any("claude" in line.lower() for line in fallbacks))
+        self.assertFalse(any("compatibility opencode" in line.lower() for line in fallbacks))
         self.assertTrue(all("?" in line for line in fallbacks))
+
+    def test_disagreement_fallbacks_keep_contiguous_source_phrasing(self) -> None:
+        text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant").model_copy(
+            update={"selected_objective": TacticalObjective.RESURRECT}
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=3)
+        fallbacks = build_disagreement_fallbacks(request)
+        joined = " ".join(fallbacks).lower()
+
+        self.assertIn("mechanism with necessity", joined)
+        self.assertNotIn("mechanism necessity", joined)
 
     def test_disagreement_fallbacks_prioritize_signal_over_chatter(self) -> None:
         text = (
@@ -236,6 +251,30 @@ class GenerationTests(unittest.TestCase):
 
         self.assertIn("quality", joined)
         self.assertIn("integration", joined)
+
+    def test_heuristic_generation_uses_multiword_openers_when_room_allows(self) -> None:
+        text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant")
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=5)
+        seeded = generate_candidates(request)
+
+        self.assertGreaterEqual(len(seeded), 3)
+        self.assertTrue(
+            any(
+                item.text.lower().startswith(
+                    (
+                        "let's tighten this,",
+                        "premise check,",
+                        "quick calibration,",
+                        "clean room pass,",
+                        "reality check,",
+                        "small correction,",
+                    )
+                )
+                for item in seeded
+            )
+        )
 
 
 if __name__ == "__main__":

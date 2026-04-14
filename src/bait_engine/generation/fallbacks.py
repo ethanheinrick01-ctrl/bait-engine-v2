@@ -23,40 +23,114 @@ _HIGH_SIGNAL = {
 _QUESTION_OBJECTIVES = {"hook", "resurrect", "stall", "branch_split"}
 
 
+def _anchor_piece_score(token: str, frequency: dict[str, int]) -> int:
+    score = frequency.get(token, 0) * 2
+    if len(token) >= 8:
+        score += 1
+    if token in _HIGH_SIGNAL:
+        score += 3
+    if token in _LOW_SIGNAL:
+        score -= 4
+    if token in {"downvotes", "you'll", "already", "something", "show", "going", "once"}:
+        score -= 3
+    return score
+
+
+def _source_fragments(source_text: str) -> list[str]:
+    fragments: list[str] = []
+    seen: set[str] = set()
+    for block in re.split(r"[.?!\n;]+", source_text or ""):
+        block = " ".join(block.strip().split())
+        if not block:
+            continue
+        pieces = [block]
+        if len(block.split()) > 10:
+            pieces = [chunk.strip(" ,") for chunk in re.split(r",| but | and | because ", block) if chunk.strip(" ,")]
+        for piece in pieces:
+            normalized = " ".join(piece.split())
+            if len(normalized.split()) < 3:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            fragments.append(normalized)
+    return fragments[:8]
+
+
 def _source_anchor(source_text: str) -> str:
-    tokens = [token for token in _TOKEN_RE.findall((source_text or "").lower()) if len(token) >= 4 and token not in _STOPWORDS]
-    if not tokens:
+    source = (source_text or "").strip()
+    if not source:
         return "that claim"
-    unique = list(dict.fromkeys(tokens))
-    if not unique:
-        return "that claim"
-    frequency: dict[str, int] = {}
-    for token in tokens:
-        frequency[token] = frequency.get(token, 0) + 1
 
-    scored = []
-    for idx, token in enumerate(unique):
-        score = 0
-        score += frequency.get(token, 0) * 2
-        if len(token) >= 8:
-            score += 1
-        if token in _HIGH_SIGNAL:
-            score += 3
-        if token in _LOW_SIGNAL:
-            score -= 4
-        if token in {"downvotes", "you'll", "already", "something", "show", "going", "once"}:
-            score -= 3
-        scored.append((score, -idx, token))
+    fragments = _source_fragments(source)
+    if not fragments:
+        fragments = [" ".join(source.split())]
 
-    scored.sort(reverse=True)
-    picked = [token for score, _, token in scored if score > 0][:2]
-    if not picked:
-        picked = [token for _, _, token in scored[:2] if token]
-    if not picked:
+    best_fragment = ""
+    best_score = 0
+    for fragment in fragments:
+        tokens = [match.group(0).lower() for match in _TOKEN_RE.finditer(fragment)]
+        frequency: dict[str, int] = {}
+        for token in tokens:
+            if len(token) >= 4 and token not in _STOPWORDS:
+                frequency[token] = frequency.get(token, 0) + 1
+
+        fragment_score = sum(_anchor_piece_score(token, frequency) for token in frequency)
+        if fragment_score > best_score:
+            best_score = fragment_score
+            best_fragment = fragment
+
+    if not best_fragment:
         return "that claim"
-    if len(picked) == 1:
-        return picked[0]
-    return f"{picked[0]} {picked[1]}"
+
+    matches = [
+        (idx, match.group(0).lower(), match.start(), match.end())
+        for idx, match in enumerate(_TOKEN_RE.finditer(best_fragment))
+        if len(match.group(0)) >= 4 and match.group(0).lower() not in _STOPWORDS
+    ]
+    if not matches:
+        return "that claim"
+
+    frequency = {token: sum(1 for _, other, _, _ in matches if other == token) for _, token, _, _ in matches}
+    best_single: tuple[int, int, str] | None = None
+    best_pair: tuple[int, int, int, int] | None = None
+
+    for idx, token, _start, _end in matches:
+        score = _anchor_piece_score(token, frequency)
+        if best_single is None or score > best_single[0] or (score == best_single[0] and idx < best_single[1]):
+            best_single = (score, idx, token)
+
+    for left_idx, (_, left_token, _, _) in enumerate(matches):
+        for right_offset in range(1, min(5, len(matches) - left_idx)):
+            right_idx = left_idx + right_offset
+            right = matches[right_idx]
+            right_token = right[1]
+            span_words = right[0] - matches[left_idx][0] + 1
+            if span_words > 6:
+                continue
+            pair_score = _anchor_piece_score(left_token, frequency) + _anchor_piece_score(right_token, frequency)
+            pair_score += max(0, 3 - span_words)
+            if best_pair is None or pair_score > best_pair[0] or (
+                pair_score == best_pair[0] and span_words < best_pair[3]
+            ):
+                best_pair = (pair_score, left_idx, right_idx, span_words)
+
+    if best_single is None:
+        return "that claim"
+
+    use_pair = best_pair is not None and best_pair[0] >= best_single[0] + 1
+    if use_pair:
+        left_match = matches[best_pair[1]]
+        right_match = matches[best_pair[2]]
+        start = left_match[2]
+        end = right_match[3]
+        anchor = best_fragment[start:end]
+    else:
+        anchor = best_single[2]
+
+    anchor = " ".join(anchor.split()).strip(" ,.-")
+    return anchor or "that claim"
 
 
 def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:

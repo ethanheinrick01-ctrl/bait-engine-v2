@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Callable
 
 from bait_engine.adapters.contracts import OutboundReplyEnvelope
 from bait_engine.adapters.inbound import InboundThreadContext, summarize_thread_context
@@ -113,6 +113,24 @@ def _candidate_clauses(text: str) -> list[str]:
     return clauses
 
 
+def _candidate_clause_segments(text: str) -> list[tuple[str, str]]:
+    cleaned = _strip_blend_prefix(text)
+    clauses: list[tuple[str, str]] = []
+    for sentence in re.finditer(r"[^.!?]+(?:[.!?]+|$)", cleaned):
+        sentence_text = sentence.group(0).strip()
+        if not sentence_text:
+            continue
+        terminal = sentence_text[-1] if sentence_text[-1] in ".!?" else ""
+        sentence_core = sentence_text.rstrip(".!?")
+        parts = re.split(r",\s+", sentence_core)
+        for index, clause in enumerate(parts):
+            normalized = " ".join(clause.strip().split())
+            if len(normalized.split()) < 3:
+                continue
+            clauses.append((normalized, terminal if index == len(parts) - 1 else ""))
+    return clauses
+
+
 def _looks_like_sting(clause: str) -> bool:
     lowered = f" {clause.lower()} "
     return any(marker in lowered for marker in _BLEND_STING_MARKERS)
@@ -143,7 +161,7 @@ def _is_low_signal_clause(clause: str) -> bool:
     return False
 
 
-def _best_clause(clauses: list[str], *, predicate: callable[[str], bool] | None = None) -> str | None:
+def _best_clause(clauses: list[str], *, predicate: Callable[[str], bool] | None = None) -> str | None:
     filtered = [clause for clause in clauses if predicate(clause)] if predicate is not None else list(clauses)
     if not filtered:
         return None
@@ -151,6 +169,27 @@ def _best_clause(clauses: list[str], *, predicate: callable[[str], bool] | None 
     if high_signal:
         filtered = high_signal
     return max(filtered, key=lambda clause: (len(clause.split()), len(clause)))
+
+
+def _best_clause_segment(
+    clauses: list[tuple[str, str]],
+    *,
+    predicate: Callable[[str], bool] | None = None,
+) -> tuple[str, str] | None:
+    filtered = [clause for clause in clauses if predicate(clause[0])] if predicate is not None else list(clauses)
+    if not filtered:
+        return None
+    high_signal = [clause for clause in filtered if not _is_low_signal_clause(clause[0])]
+    if high_signal:
+        filtered = high_signal
+    return max(filtered, key=lambda clause: (len(clause[0].split()), len(clause[0])))
+
+
+def _sentence_case(text: str) -> str:
+    cleaned = " ".join((text or "").strip().split())
+    if cleaned and cleaned[0].isalpha():
+        return cleaned[0].upper() + cleaned[1:]
+    return cleaned
 
 
 def _compose_top_candidates(
@@ -181,6 +220,7 @@ def _compose_top_candidates(
         return None, []
 
     lead = support = sting = None
+    lead_terminal = support_terminal = sting_terminal = ""
     rank_indexes: list[int] = []
 
     if strategy == "mega_bait":
@@ -194,39 +234,56 @@ def _compose_top_candidates(
         if lead_entry or support_entry or sting_entry:
             chosen_entries = [entry for entry in (lead_entry, support_entry, sting_entry) if entry is not None]
             rank_indexes = [rank for _, rank in chosen_entries]
-            lead_clauses = _candidate_clauses((lead_entry or chosen_entries[0])[0])
-            support_clauses = _candidate_clauses(support_entry[0]) if support_entry is not None else []
-            sting_clauses = _candidate_clauses(sting_entry[0]) if sting_entry is not None else []
-            lead = _best_clause(lead_clauses, predicate=_looks_like_relation) or _best_clause(lead_clauses) or (lead_entry or chosen_entries[0])[0].rstrip(".?!")
+            lead_clauses = _candidate_clause_segments((lead_entry or chosen_entries[0])[0])
+            support_clauses = _candidate_clause_segments(support_entry[0]) if support_entry is not None else []
+            sting_clauses = _candidate_clause_segments(sting_entry[0]) if sting_entry is not None else []
+            lead_segment = _best_clause_segment(lead_clauses, predicate=_looks_like_relation) or _best_clause_segment(lead_clauses)
+            lead = lead_segment[0] if lead_segment is not None else (lead_entry or chosen_entries[0])[0].rstrip(".?!")
+            lead_terminal = lead_segment[1] if lead_segment is not None else ""
             if support_entry is not None:
-                support = _best_clause(support_clauses, predicate=_looks_like_relation) or _best_clause(support_clauses) or support_entry[0].rstrip(".?!")
+                support_segment = _best_clause_segment(support_clauses, predicate=_looks_like_relation) or _best_clause_segment(support_clauses)
+                support = support_segment[0] if support_segment is not None else support_entry[0].rstrip(".?!")
+                support_terminal = support_segment[1] if support_segment is not None else ""
             if sting_entry is not None:
-                sting = _best_clause(sting_clauses, predicate=_looks_like_sting) or _best_clause(sting_clauses) or sting_entry[0].rstrip(".?!")
+                sting_segment = _best_clause_segment(sting_clauses, predicate=_looks_like_sting) or _best_clause_segment(sting_clauses)
+                sting = sting_segment[0] if sting_segment is not None else sting_entry[0].rstrip(".?!")
+                sting_terminal = sting_segment[1] if sting_segment is not None else ""
 
     if lead is None:
         rank_indexes = [rank for _, rank, _ in selected]
-        candidate_clauses = [_candidate_clauses(text) for text, _, _ in selected]
-        lead = _best_clause(candidate_clauses[0], predicate=_looks_like_relation) or _best_clause(candidate_clauses[0]) or selected[0][0].rstrip(".?!")
+        candidate_clauses = [_candidate_clause_segments(text) for text, _, _ in selected]
+        lead_segment = _best_clause_segment(candidate_clauses[0], predicate=_looks_like_relation) or _best_clause_segment(candidate_clauses[0])
+        lead = lead_segment[0] if lead_segment is not None else selected[0][0].rstrip(".?!")
+        lead_terminal = lead_segment[1] if lead_segment is not None else ""
         for clauses in candidate_clauses:
             if sting is None:
-                sting = _best_clause(clauses, predicate=_looks_like_sting)
+                sting_segment = _best_clause_segment(clauses, predicate=_looks_like_sting)
+                if sting_segment is not None:
+                    sting, sting_terminal = sting_segment
             if support is None:
-                candidate_support = _best_clause(clauses, predicate=_looks_like_relation) or _best_clause(clauses)
-                if candidate_support and _sentence_fingerprint(candidate_support) != _sentence_fingerprint(lead):
-                    support = candidate_support
+                candidate_support = _best_clause_segment(clauses, predicate=_looks_like_relation) or _best_clause_segment(clauses)
+                if candidate_support and _sentence_fingerprint(candidate_support[0]) != _sentence_fingerprint(lead):
+                    support, support_terminal = candidate_support
 
     if support and _sentence_fingerprint(support) == _sentence_fingerprint(lead):
         support = None
+        support_terminal = ""
     if sting and _sentence_fingerprint(sting) in {_sentence_fingerprint(lead), _sentence_fingerprint(support or "")}:
         sting = None
+        sting_terminal = ""
 
-    body = lead.rstrip(".?!")
+    sentences: list[str] = []
     if support:
-        body = f"{body}, and {_lowercase_lead(support.rstrip('.?!'))}"
-    if sting:
-        final = f"{body}. {sting.rstrip('.?!').capitalize()}."
+        if lead_terminal == "?" or support_terminal == "?":
+            sentences.append(f"{_sentence_case(lead)}{lead_terminal or '.'}")
+            sentences.append(f"{_sentence_case(support)}{support_terminal or '.'}")
+        else:
+            sentences.append(f"{lead.rstrip('.?!')}, and {_lowercase_lead(support.rstrip('.?!'))}.")
     else:
-        final = f"{body}."
+        sentences.append(f"{lead.rstrip('.?!')}{lead_terminal or '.'}")
+    if sting:
+        sentences.append(f"{_sentence_case(sting)}{sting_terminal or '.'}")
+    final = " ".join(sentences)
     return final.strip(), rank_indexes
 
 

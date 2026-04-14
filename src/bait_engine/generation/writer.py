@@ -1119,7 +1119,14 @@ def _render_source_frame(frame: str, request: DraftRequest, idx: int, seed: int,
     text = frame
     _, max_words = request.persona.length_band_words
 
-    can_prefix = len(text.split()) <= max_words - 4 and opener and len(opener.split()) <= 1 and opener.lower() not in _HARD_OPENERS and idx % 2 == 0
+    opener_words = len(opener.split()) if opener else 0
+    can_prefix = (
+        opener
+        and opener_words <= 3
+        and opener.lower() not in _HARD_OPENERS
+        and len(text.split()) + opener_words + 1 <= max_words
+        and idx % 2 == 0
+    )
     if can_prefix:
         text = f"{opener}, {text}"
     if mutation_hints:
@@ -1175,11 +1182,12 @@ def generate_candidates(request: DraftRequest) -> list[CandidateReply]:
     seeded_specs: list[tuple[str, str]] = []
     primary_fragment = unique_fragments[0]
     secondary_fragment = unique_fragments[1] if len(unique_fragments) > 1 else primary_fragment
+    sting_fragment = unique_fragments[2] if len(unique_fragments) > 2 else secondary_fragment
     seeded_specs.append((primary_fragment, "lead"))
     if request.candidate_count >= 2:
         seeded_specs.append((secondary_fragment, "support"))
     if request.candidate_count >= 3:
-        seeded_specs.append((primary_fragment, "sting"))
+        seeded_specs.append((sting_fragment, "sting"))
 
     def _append_candidate(fragment: str, role: str, idx: int) -> None:
         nonlocal results

@@ -336,6 +336,45 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(metadata.get("selected_candidate_text"), "That framing is lazy and ignores basic funding mechanics.")
         self.assertTrue(metadata.get("emitted_body_differs_from_selected_candidate"))
 
+    def test_build_reply_envelope_blend_top3_breaks_question_support_into_new_sentence(self) -> None:
+        run = {
+            "id": 105,
+            "platform": "reddit",
+            "persona": "dry_midwit_savant",
+            "selected_objective": "tilt",
+            "selected_tactic": "calm_reduction",
+            "exit_state": "one_more_spike",
+            "candidates": [
+                {
+                    "text": "That framing is lazy and ignores basic funding mechanics.",
+                    "rank_index": 1,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.91,
+                },
+                {
+                    "text": "What if the premise is wrong?",
+                    "rank_index": 2,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "rank_score": 0.88,
+                },
+            ],
+        }
+
+        envelope = build_reply_envelope(
+            run,
+            selection_strategy="blend_top3",
+            thread_id="t3_deadbeef",
+            reply_to_id="t1_abc",
+        )
+
+        body = envelope["body"]
+        self.assertIn(". What if the premise is wrong?", body)
+        self.assertNotIn(", and what if the premise is wrong", body.lower())
+        metadata = envelope.get("metadata") or {}
+        self.assertEqual(metadata.get("combined_candidate_rank_indexes"), [1, 2])
+
     def test_build_reply_envelope_mega_bait_uses_weave_strategy(self) -> None:
         run = {
             "id": 103,
@@ -393,6 +432,47 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(metadata.get("composition_strategy"), "mega_bait")
         self.assertTrue(metadata.get("combined_top_candidates"))
         self.assertEqual(metadata.get("combined_candidate_rank_indexes"), [1, 2, 3])
+
+    def test_build_reply_envelope_mega_bait_breaks_question_support_into_new_sentence(self) -> None:
+        run = {
+            "id": 106,
+            "platform": "reddit",
+            "persona": "dry_midwit_savant",
+            "selected_objective": "tilt",
+            "selected_tactic": "calm_reduction",
+            "exit_state": "one_more_spike",
+            "candidates": [
+                {
+                    "text": "That framing is lazy and ignores basic funding mechanics.",
+                    "rank_index": 1,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "weave_role": "lead",
+                    "rank_score": 0.91,
+                },
+                {
+                    "text": "What if the premise is wrong?",
+                    "rank_index": 2,
+                    "objective": "tilt",
+                    "tactic": "calm_reduction",
+                    "weave_role": "support",
+                    "rank_score": 0.88,
+                },
+            ],
+        }
+
+        envelope = build_reply_envelope(
+            run,
+            selection_strategy="mega_bait",
+            thread_id="t3_deadbeef",
+            reply_to_id="t1_abc",
+        )
+
+        body = envelope["body"]
+        self.assertIn(". What if the premise is wrong?", body)
+        self.assertNotIn(", and what if the premise is wrong", body.lower())
+        metadata = envelope.get("metadata") or {}
+        self.assertEqual(metadata.get("combined_candidate_rank_indexes"), [1, 2])
 
     def test_build_reply_envelope_mega_bait_skips_low_signal_framing_clauses(self) -> None:
         run = {
