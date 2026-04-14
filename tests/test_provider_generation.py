@@ -209,6 +209,26 @@ class ProviderGenerationTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(result.candidates), 1)
 
+    def test_disagreement_fallback_sequence_avoids_duplicate_lines_when_count_exceeds_base_pool(self) -> None:
+        text = "Main compatibility for claude code and opencode is already working."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant").model_copy(
+            update={"selected_objective": TacticalObjective.RESURRECT}
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=4)
+        provider = FakeProvider(
+            "1. I agree completely with this\n"
+            "2. I agree with your point here\n"
+            "3. Yes exactly this is right\n"
+            "4. Absolutely yes, agreed"
+        )
+        result = draft_candidates_with_provider(request, provider=provider)
+
+        self.assertEqual(len(result.candidates), 4)
+        self.assertTrue(all(item.generation_source == "disagreement_fallback" for item in result.candidates))
+        normalized = {" ".join(item.text.lower().split()) for item in result.candidates}
+        self.assertEqual(len(normalized), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

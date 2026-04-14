@@ -4,7 +4,7 @@ import logging
 
 from bait_engine.generation.contracts import CandidateReply, DraftRequest, DraftResult
 from bait_engine.generation.critic import critique_candidate, objective_shape_ok, starts_with_agreement_language
-from bait_engine.generation.fallbacks import build_disagreement_fallbacks
+from bait_engine.generation.fallbacks import build_disagreement_sequence
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates
 
@@ -20,10 +20,10 @@ def _enforce_disagreement(candidates: list[CandidateReply], request: DraftReques
     if filtered:
         return filtered
 
-    fallback_pool = build_disagreement_fallbacks(request)
+    fallback_pool = build_disagreement_sequence(request, request.candidate_count)
     fallback: list[CandidateReply] = []
     for idx in range(request.candidate_count):
-        text = fallback_pool[idx % len(fallback_pool)]
+        text = fallback_pool[idx]
         fallback.append(
             CandidateReply(
                 text=text,

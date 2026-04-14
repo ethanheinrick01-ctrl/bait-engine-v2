@@ -21,6 +21,21 @@ _HIGH_SIGNAL = {
     "minimum", "wage", "wages", "prices", "argument", "proof", "claim",
 }
 _QUESTION_OBJECTIVES = {"hook", "resurrect", "stall", "branch_split"}
+_DEFAULT_QUESTION_TAILS = (
+    "in concrete terms?",
+    "with one test?",
+    "step by step?",
+)
+_FAKE_SINCERE_QUESTION_TAILS = (
+    "where does that bridge happen?",
+    "where would you pin the evidence?",
+    "what would falsify it?",
+)
+_DEFAULT_STATEMENT_TAILS = (
+    "that's still the gap",
+    "and that's load-bearing",
+    "that's the missing bridge",
+)
 
 
 def _anchor_piece_score(token: str, frequency: dict[str, int]) -> int:
@@ -150,6 +165,7 @@ def _source_anchor(source_text: str) -> str:
 def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:
     objective = request.plan.selected_objective.value
     tactic = request.plan.selected_tactic.value if request.plan.selected_tactic is not None else ""
+    persona_name = request.persona.name
     anchor = _source_anchor(request.source_text)
     anchor_label = f"'{anchor}'" if anchor != "that claim" else "that claim"
     if objective in _QUESTION_OBJECTIVES:
@@ -160,16 +176,34 @@ def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:
                     "what test makes that conclusion hold up?",
                     "how does that claim survive one hard check?",
                 ]
+            if persona_name == "fake_sincere_questioner":
+                return [
+                    f"can you walk me through how {anchor_label} signals quality instead of just integration?",
+                    f"where would you pin evidence beyond {anchor_label}?",
+                    f"what check would show {anchor_label} makes the claim true?",
+                ]
             return [
                 f"how does {anchor_label} prove quality instead of just integration?",
                 f"where is the evidence beyond {anchor_label}?",
                 f"what test shows {anchor_label} means the claim is true?",
             ]
         if anchor == "that claim":
+            if persona_name == "fake_sincere_questioner":
+                return [
+                    "could you walk me through the missing step between premise and conclusion?",
+                    "what evidence is supposed to carry that leap?",
+                    "which part of that line establishes the actual claim?",
+                ]
             return [
                 "where is the missing step between premise and conclusion?",
                 "what proof is supposed to carry that leap?",
                 "how does that line establish the actual claim?",
+            ]
+        if persona_name == "fake_sincere_questioner":
+            return [
+                f"could you walk me through how {anchor_label} proves the conclusion?",
+                f"what step turns {anchor_label} into an argument we can test?",
+                f"which evidence makes {anchor_label} establish the claim?",
             ]
         return [
             f"where does {anchor_label} actually prove the conclusion?",
@@ -177,13 +211,68 @@ def build_disagreement_fallbacks(request: DraftRequest) -> list[str]:
             f"how is {anchor_label} supposed to establish the claim?",
         ]
     if anchor == "that claim":
+        if persona_name == "fake_sincere_questioner":
+            return [
+                "i'm not seeing how that leap proves your claim",
+                "the missing step still carries the whole argument",
+                "useful is still not the same as true here",
+            ]
         return [
             "that leap still doesn't prove your claim",
             "you're skipping the step that actually matters",
             "useful isn't the same as true, that's the gap",
+        ]
+    if persona_name == "fake_sincere_questioner":
+        return [
+            f"i'm not seeing how {anchor_label} proves the point",
+            f"it feels like {anchor_label} is being treated as proof",
+            f"{anchor_label} reads more like framing than evidence",
         ]
     return [
         f"{anchor_label} still doesn't prove the point",
         f"you're treating {anchor_label} like proof when it isn't",
         f"{anchor_label} is framing, not evidence",
     ]
+
+
+def _expand_fallback_line(base: str, *, persona_name: str, offset: int) -> str:
+    stem = base.rstrip("?").strip()
+    is_question = base.strip().endswith("?")
+    if is_question:
+        tails = _FAKE_SINCERE_QUESTION_TAILS if persona_name == "fake_sincere_questioner" else _DEFAULT_QUESTION_TAILS
+        tail = tails[offset % len(tails)]
+        return f"{stem}, {tail}"
+    tail = _DEFAULT_STATEMENT_TAILS[offset % len(_DEFAULT_STATEMENT_TAILS)]
+    return f"{stem}, {tail}"
+
+
+def build_disagreement_sequence(request: DraftRequest, candidate_count: int) -> list[str]:
+    pool = build_disagreement_fallbacks(request)
+    if candidate_count <= 0:
+        return []
+    if len(pool) >= candidate_count:
+        return pool[:candidate_count]
+
+    seen: set[str] = set()
+    expanded: list[str] = []
+    for idx in range(candidate_count * 4):
+        if len(expanded) >= candidate_count:
+            break
+        if idx < len(pool):
+            candidate = pool[idx]
+        else:
+            base_index = (idx - len(pool) + 1) % len(pool)
+            candidate = _expand_fallback_line(
+                pool[base_index],
+                persona_name=request.persona.name,
+                offset=idx - len(pool),
+            )
+        normalized = " ".join(candidate.lower().split())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        expanded.append(candidate)
+
+    while len(expanded) < candidate_count:
+        expanded.append(pool[len(expanded) % len(pool)])
+    return expanded[:candidate_count]

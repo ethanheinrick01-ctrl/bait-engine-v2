@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from bait_engine.analysis import AnalyzeInput, analyze_comment
 from bait_engine.core.types import TacticalObjective, TacticFamily
 from bait_engine.generation import CandidateReply, DraftRequest, MutationSeed, build_prompt_payload, draft_candidates
-from bait_engine.generation.fallbacks import build_disagreement_fallbacks
+from bait_engine.generation.fallbacks import build_disagreement_fallbacks, build_disagreement_sequence
 from bait_engine.generation.ranker import rank_candidates
 from bait_engine.generation.writer import generate_candidates, reset_style_memory
 from bait_engine.planning import build_plan, get_persona
@@ -252,6 +252,32 @@ class GenerationTests(unittest.TestCase):
 
         self.assertIn("quality", joined)
         self.assertIn("integration", joined)
+
+    def test_disagreement_sequence_expands_without_duplicate_lines(self) -> None:
+        text = "Main compatibility for claude code and opencode is already working."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="dry_midwit_savant").model_copy(
+            update={"selected_objective": TacticalObjective.RESURRECT}
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("dry_midwit_savant"), candidate_count=4)
+        lines = build_disagreement_sequence(request, candidate_count=4)
+
+        self.assertEqual(len(lines), 4)
+        normalized = {" ".join(line.lower().split()) for line in lines}
+        self.assertEqual(len(normalized), 4)
+
+    def test_fake_sincere_fallbacks_use_softer_question_register(self) -> None:
+        text = "I wake up, drive to work, gym, dinner, youtube, sleep. Probably not much different."
+        analysis = analyze_comment(AnalyzeInput(text=text))
+        plan = build_plan(analysis, persona="fake_sincere_questioner").model_copy(
+            update={"selected_objective": TacticalObjective.RESURRECT}
+        )
+        request = DraftRequest(source_text=text, plan=plan, persona=get_persona("fake_sincere_questioner"), candidate_count=3)
+        fallbacks = build_disagreement_fallbacks(request)
+        joined = " ".join(fallbacks).lower()
+
+        self.assertIn("walk me through", joined)
+        self.assertNotIn("actually prove the conclusion", joined)
 
     def test_heuristic_generation_uses_multiword_openers_when_room_allows(self) -> None:
         text = "A model being useful does not make it true, and you are confusing mechanism with necessity."
