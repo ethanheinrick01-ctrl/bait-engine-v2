@@ -3168,6 +3168,9 @@ def _create_panel_http_server(
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             base_url = f"http://{self.server.server_address[0]}:{self.server.server_address[1]}"
+            if parsed.path == "/api/health":
+                self._write_json(200, {"ok": True, "status": "online", "service": "bait-engine-panel"})
+                return
             if parsed.path in {"/api/runs", "/dashboard", "/api/outbox", "/api/daemon"}:
                 query = parse_qs(parsed.query)
                 outbox_status = query.get("outbox_status", [None])[0] or None
@@ -3243,17 +3246,31 @@ def _create_panel_http_server(
                 except (KeyError, TypeError, ValueError) as exc:
                     self._write_json(400, {"error": str(exc)})
                     return
-                top_response = None
-                created_candidates = created.get("candidates") if isinstance(created, dict) else None
-                if isinstance(created_candidates, list) and created_candidates:
-                    top_response = str((created_candidates[0] or {}).get("text") or "") or None
+                # cmd_draft(save=True) nests candidates under created["draft"]["candidates"];
+                # older code read created["candidates"] (always absent) so the response never
+                # carried any candidates. Read from the correct location and expose the full list.
+                draft_block = created.get("draft") if isinstance(created, dict) else None
+                created_candidates = draft_block.get("candidates") if isinstance(draft_block, dict) else None
+                if not isinstance(created_candidates, list):
+                    created_candidates = []
+                response_candidates = [
+                    {
+                        "text": str((c or {}).get("text") or ""),
+                        "rank_index": (c or {}).get("rank_index"),
+                        "weave_role": "lead" if i == 0 else "support" if i == 1 else "sting",
+                    }
+                    for i, c in enumerate(created_candidates)
+                    if str((c or {}).get("text") or "").strip()
+                ]
+                top_response = response_candidates[0]["text"] if response_candidates else None
                 self._write_json(
                     200,
                     {
                         "ok": True,
                         "run_id": created["run_id"],
-                        "persona": created.get("plan", {}).get("persona") if isinstance(created.get("plan"), dict) else None,
+                        "persona": created.get("selected_persona") or (created.get("plan", {}).get("persona") if isinstance(created.get("plan"), dict) else None),
                         "platform": payload.get("platform") or "reddit",
+                        "candidates": response_candidates,
                         "top_response": top_response,
                     },
                 )
